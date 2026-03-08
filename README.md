@@ -49,6 +49,13 @@ The system automatically scrapes, processes, and displays data every 6 hours, en
 - Salary range information
 - Application deadline tracking
 
+### 📱 **Progressive Web App (PWA)**
+- **Install on any device** - Add to home screen from browser (no app store needed)
+- **Offline functionality** - Works without internet connection
+- **Native-like experience** - Runs like a real mobile app
+- **Auto-updates** - Always get the latest version
+- **Works on:** iOS (Safari), Android (Chrome), Desktop (Chrome/Edge)
+
 ---
 
 ## 🛠️ Tech Stack
@@ -164,6 +171,45 @@ The system automatically scrapes, processes, and displays data every 6 hours, en
    - Add environment variable:
      - `VITE_API_BASE_URL=https://your-backend.vercel.app`
    - Deploy
+
+---
+
+## 📱 Mobile Installation (PWA)
+
+MGM Assist works as a **Progressive Web App** - users can install it on their phones like a native app!
+
+### Setup App Icons (Required)
+
+Before users can install, add app icons to `frontend/public/`:
+- `icon-192.png` (192x192 pixels)
+- `icon-512.png` (512x512 pixels)
+
+See [frontend/public/ICONS_SETUP.md](frontend/public/ICONS_SETUP.md) for detailed icon creation instructions.
+
+### How Users Install:
+
+**On Android (Chrome):**
+1. Visit your Vercel URL
+2. Tap menu (⋮) → "Add to Home Screen"
+3. MGM Assist icon appears on home screen ✅
+
+**On iOS (Safari):**
+1. Visit your Vercel URL
+2. Tap Share button → "Add to Home Screen"  
+3. MGM Assist icon appears on home screen ✅
+
+**On Desktop (Chrome/Edge):**
+1. Look for install icon (⊕) in address bar
+2. Click "Install MGM Assist"
+3. Opens as standalone app window ✅
+
+### PWA Features:
+- ✅ Works offline (cached data)
+- ✅ Full-screen experience (no browser UI)
+- ✅ Fast loading
+- ✅ Auto-updates when online
+- ✅ Home screen icon
+- ✅ Splash screen
 
 ---
 
