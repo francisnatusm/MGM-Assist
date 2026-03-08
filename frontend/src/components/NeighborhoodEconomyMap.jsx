@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Map, MapPin, RefreshCw } from 'lucide-react';
+import { Map, RefreshCw } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import L from 'leaflet';
 import { apiUrl } from '../lib/api';
+
+// Fix for default marker icons in React-Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
 
 const NeighborhoodEconomyMap = () => {
     const [data, setData] = useState({
@@ -9,6 +19,34 @@ const NeighborhoodEconomyMap = () => {
     });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+
+    // Montgomery, Alabama coordinates
+    const montgomeryCenter = [32.3668, -86.2999];
+
+    // Approximate neighborhood coordinates for Montgomery, AL
+    const getNeighboroodCoordinates = (index, name) => {
+        // Real approximate coordinates for Montgomery neighborhoods
+        const coords = {
+            'Downtown MGM': [32.3782, -86.3077],
+            'East Chase': [32.3669, -86.1655],
+            'Central MGM': [32.3668, -86.2999],
+            'Cloverdale': [32.3541, -86.2844],
+            'Old Cloverdale': [32.3521, -86.2964],
+            'Garden District': [32.3826, -86.2990],
+        };
+        
+        // If we have real coordinates for this name, use them
+        if (coords[name]) return coords[name];
+        
+        // Otherwise distribute around Montgomery
+        const offsets = [
+            [0.015, -0.008],   // Northeast
+            [-0.002, 0.035],   // East
+            [-0.012, -0.012],  // Southwest
+        ];
+        const offset = offsets[index % 3];
+        return [montgomeryCenter[0] + offset[0], montgomeryCenter[1] + offset[1]];
+    };
 
     const fetchData = async () => {
         try {
@@ -54,52 +92,54 @@ const NeighborhoodEconomyMap = () => {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-auto flex flex-col relative w-full rounded-lg border border-gray-800 bg-mgm-navy overflow-hidden">
+            <div className="flex-1 overflow-hidden flex flex-col relative w-full rounded-lg border border-gray-800 bg-mgm-navy">
                 {error ? (
                     <p className="text-red-400 text-sm p-4">Error: {error}</p>
                 ) : (
                     <>
-                        <p className="text-gray-500 p-4 pb-0 text-sm">Interactive map representing Unemployment, Income, Poverty rate.</p>
+                        <p className="text-gray-500 p-4 pb-2 text-sm">Interactive map representing Unemployment, Income, Poverty rate.</p>
 
-                        <div className="flex-1 w-full h-full relative flex items-center justify-center p-4">
-                            <div className="bg-gray-800/50 w-full h-full rounded flex items-center justify-center border border-dashed border-gray-600 relative overflow-hidden">
-
-                                {/* Map point overlays */}
-                                {data.neighborhoods?.slice(0, 3).map((neighborhood, index) => {
-                                    const positions = [
-                                        { top: '30%', left: '40%' },
-                                        { top: '50%', left: '60%' },
-                                        { bottom: '20%', right: '30%' }
-                                    ];
-                                    const position = positions[index] || positions[0];
+                        <div className="flex-1 w-full h-full relative rounded-b-lg overflow-hidden">
+                            <MapContainer 
+                                center={montgomeryCenter} 
+                                zoom={12} 
+                                style={{ height: '100%', width: '100%' }}
+                                zoomControl={true}
+                            >
+                                <TileLayer
+                                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                                />
+                                
+                                {!loading && data.neighborhoods?.map((neighborhood, index) => {
+                                    const position = getNeighboroodCoordinates(index, neighborhood.name);
                                     
                                     return (
-                                        <div 
-                                            key={index} 
-                                            className="absolute group cursor-pointer"
-                                            style={position}
-                                        >
-                                            <MapPin className={`${index === 0 ? 'text-mgm-gold' : 'text-mgm-blue'} w-6 h-6`} />
-                                            <div className="absolute top-8 left-1/2 -translate-x-1/2 w-40 bg-mgm-card border border-mgm-gold p-2 rounded shadow-xl hidden group-hover:block transition z-10">
-                                                <p className="text-xs font-bold text-white mb-1">{neighborhood.name}</p>
-                                                <p className="text-[10px] text-gray-400">Unemployment: {neighborhood.unemployment}%</p>
-                                                <p className="text-[10px] text-gray-400">Avg Income: ${(neighborhood.avgIncome / 1000).toFixed(0)}k</p>
-                                                <p className="text-[10px] text-gray-400">Poverty: {neighborhood.povertyRate}%</p>
-                                            </div>
-                                        </div>
+                                        <Marker key={index} position={position}>
+                                            <Popup>
+                                                <div className="text-sm">
+                                                    <p className="font-bold text-mgm-blue mb-1">{neighborhood.name}</p>
+                                                    <p className="text-xs text-gray-700">
+                                                        <strong>Unemployment:</strong> {neighborhood.unemployment}%
+                                                    </p>
+                                                    <p className="text-xs text-gray-700">
+                                                        <strong>Avg Income:</strong> ${(neighborhood.avgIncome / 1000).toFixed(0)}k
+                                                    </p>
+                                                    <p className="text-xs text-gray-700">
+                                                        <strong>Poverty Rate:</strong> {neighborhood.povertyRate}%
+                                                    </p>
+                                                </div>
+                                            </Popup>
+                                        </Marker>
                                     );
                                 })}
+                            </MapContainer>
 
-                                {!loading && data.neighborhoods?.length === 0 && (
-                                    <p className="opacity-40 text-sm font-mono tracking-widest">[ AWAITING DATA ]</p>
-                                )}
-                                {loading && (
-                                    <p className="opacity-40 text-sm font-mono tracking-widest">[ LOADING... ]</p>
-                                )}
-                                {!loading && data.neighborhoods?.length > 0 && (
-                                    <p className="opacity-40 text-sm font-mono tracking-widest">[ HOVER OVER PINS ]</p>
-                                )}
-                            </div>
+                            {loading && (
+                                <div className="absolute inset-0 bg-mgm-navy/80 flex items-center justify-center z-[1000]">
+                                    <p className="text-gray-400 text-sm font-mono tracking-widest">[ LOADING MAP... ]</p>
+                                </div>
+                            )}
                         </div>
                     </>
                 )}
