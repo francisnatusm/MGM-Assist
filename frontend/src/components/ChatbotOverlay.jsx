@@ -51,7 +51,13 @@ const ChatbotOverlay = () => {
     };
 
     return (
-        <div className="fixed bottom-6 right-6 z-50 flex flex-col items-center">
+        <div 
+            className="fixed z-[9999] flex flex-col items-center pointer-events-auto"
+            style={{
+                bottom: 'max(1rem, env(safe-area-inset-bottom, 0px))',
+                right: 'max(1rem, env(safe-area-inset-right, 0px))',
+            }}
+        >
             <div className="mb-2 pointer-events-none">
                 <span className="text-xs font-semibold tracking-wide bg-mgm-card/95 text-mgm-gold border border-gray-700 px-2.5 py-1 rounded-full shadow-lg">
                     Chat with MGM AI
@@ -61,14 +67,14 @@ const ChatbotOverlay = () => {
             {/* Toggle Button */}
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-14 h-14 bg-mgm-gold hover:bg-yellow-500 text-mgm-navy rounded-full flex items-center justify-center shadow-2xl transition-transform hover:scale-105 active:scale-95"
+                className="w-14 h-14 bg-mgm-gold hover:bg-yellow-500 text-mgm-navy rounded-full flex items-center justify-center shadow-2xl transition-transform hover:scale-105 active:scale-95 relative z-[9999]"
             >
                 {isOpen ? <X className="w-7 h-7" /> : <MessageSquare className="w-7 h-7" />}
             </button>
 
             {/* Chat Window */}
             {isOpen && (
-                <div className="absolute bottom-20 right-0 w-[400px] h-[550px] max-h-[85vh] bg-mgm-card rounded-2xl shadow-2xl border border-gray-700 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-5">
+                <div className="absolute bottom-20 right-0 w-[90vw] md:w-[400px] h-[500px] md:h-[550px] max-h-[85vh] bg-mgm-card rounded-2xl shadow-2xl border border-gray-700 flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-5 z-[9998]">
                     {/* Header */}
                     <div className="bg-mgm-navy px-5 py-4 flex justify-between items-center border-b border-gray-800">
                         <div className="flex items-center gap-3 text-white">
