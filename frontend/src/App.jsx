@@ -2,7 +2,7 @@ import React from 'react';
 import CapitalCityCareers from './components/CapitalCityCareers';
 import BusinessSignals from './components/BusinessSignals';
 import NeighborhoodEconomyMap from './components/NeighborhoodEconomyMap';
-import OpportunityFinder from './components/OpportunityFinder';
+import MontgomeryPulse from './components/MontgomeryPulse';
 import ChatbotOverlay from './components/ChatbotOverlay';
 
 function App() {
@@ -20,7 +20,7 @@ function App() {
         <CapitalCityCareers />
         <BusinessSignals />
         <NeighborhoodEconomyMap />
-        <OpportunityFinder />
+        <MontgomeryPulse />
       </div>
 
       <ChatbotOverlay />

@@ -616,6 +616,42 @@ app.get('/api/dashboard/opportunities', async (req, res) => {
   }
 });
 
+// Get Montgomery Pulse civic news feed
+app.get('/api/montgomery-pulse', async (req, res) => {
+  try {
+    const db = getFirestore();
+    if (!db) {
+      return res.status(503).json({ error: 'Firebase not configured' });
+    }
+
+    const { category, page = 1 } = req.query;
+    const limit = 10;
+    const offset = (parseInt(page) - 1) * limit;
+
+    let query = db.collection('montgomery_pulse')
+      .orderBy('date', 'desc');
+
+    if (category && category !== 'all') {
+      query = query.where('category', '==', category);
+    }
+
+    const snapshot = await query.limit(limit).offset(offset).get();
+    
+    const items = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    // Get the most recent item's date for "last updated"
+    const lastUpdated = items.length > 0 ? items[0].date : new Date();
+
+    res.json({ items, lastUpdated });
+  } catch (error) {
+    console.error('Error fetching Montgomery Pulse data:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Trigger manual update for a dashboard (for testing/debugging)
 app.post('/api/dashboard/refresh/:dashboard', async (req, res) => {
   try {
@@ -633,6 +669,10 @@ app.post('/api/dashboard/refresh/:dashboard', async (req, res) => {
         break;
       case 'opportunities':
         await runOpportunityCron();
+        break;
+      case 'pulse':
+      case 'montgomery-pulse':
+        await runMontgomeryPulseCron();
         break;
       default:
         return res.status(400).json({ error: 'Invalid dashboard name' });
@@ -921,6 +961,148 @@ function categorizeJob(title) {
   return 'General';
 }
 
+// 5. Montgomery Pulse - Scrape civic news every 6 hours
+const runMontgomeryPulseCron = async () => {
+  console.log("🔄 Running Montgomery Pulse Task...");
+  const db = getFirestore();
+  if (!db) return;
+
+  try {
+    if (MCP_TOOLS.length === 0) await initializeMCPTools();
+
+    const montgomeryUrls = [
+      'https://www.montgomeryal.gov/government/stay-informed/city-news',
+      'https://www.montgomeryal.gov/government/stay-informed/public-notices',
+      'https://www.montgomeryal.gov/government/city-government/city-council',
+      'https://www.montgomeryal.gov/government/city-government/mayor-s-office',
+      'https://www.montgomeryal.gov/government/city-government/city-calendar'
+    ];
+
+    const allScrapedContent = [];
+
+    // Scrape all Montgomery URLs
+    for (const url of montgomeryUrls) {
+      try {
+        let scrapeResult;
+        
+        // Try scrape_as_markdown first (Bright Data tool)
+        if (ACTIVE_MCP_SOURCE === 'brightdata') {
+          scrapeResult = await executeMcpTool('scrape_as_markdown', { url });
+        } else {
+          // Fallback to custom fetch_webpage_content
+          scrapeResult = await executeMcpTool('fetch_webpage_content', { 
+            url, 
+            parse_type: 'text' 
+          });
+        }
+
+        if (scrapeResult.ok && scrapeResult.result) {
+          const content = scrapeResult.result.content || scrapeResult.result.data || '';
+          allScrapedContent.push({ url, content: content.substring(0, 5000) });
+        }
+      } catch (error) {
+        console.error(`❌ Error scraping ${url}:`, error.message);
+      }
+    }
+
+    if (allScrapedContent.length === 0) {
+      console.warn('⚠️ No content scraped from Montgomery URLs');
+      return;
+    }
+
+    // Send to Claude for processing
+    const prompt = `Read this scraped content from Montgomery, Alabama city government websites. 
+    Extract each individual news item, announcement, public notice, council decision, mayor announcement, new ordinance, deadline, or upcoming meeting.
+    
+    For each item you find:
+    1. Categorize it as exactly one of: "council", "mayor", "ordinance", "deadline", or "meeting"
+    2. Write a clear 2-3 sentence plain English summary
+    3. Extract the title/headline (max 10 words)
+    4. Extract any deadline date if mentioned (as ISO date string or null)
+    5. Extract any action link if there's a registration/application/more info URL (or null)
+    6. Suggest an action label: "Apply Now", "Register", "Read More", or null
+    
+    Return ONLY a valid JSON array with this exact structure:
+    [
+      {
+        "category": "council" | "mayor" | "ordinance" | "deadline" | "meeting",
+        "title": "short headline",
+        "summary": "2-3 sentence summary in plain English",
+        "deadline": "YYYY-MM-DD" or null,
+        "actionLink": "https://..." or null,
+        "actionLabel": "Apply Now" | "Register" | "Read More" | null,
+        "source": "original url"
+      }
+    ]
+    
+    Scraped content from Montgomery websites:
+    ${JSON.stringify(allScrapedContent).slice(0, 8000)}`;
+
+    const claudeResult = await runConversationWithTools(MODELS_TO_TRY[0], prompt);
+    
+    if (!claudeResult.ok) {
+      console.error('❌ Claude processing failed');
+      return;
+    }
+
+    let pulseItems = [];
+    try {
+      // Try to parse Claude's response as JSON
+      const jsonMatch = claudeResult.message.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        pulseItems = JSON.parse(jsonMatch[0]);
+      } else {
+        pulseItems = JSON.parse(claudeResult.message);
+      }
+    } catch (e) {
+      console.warn('⚠️ Failed to parse Claude response:', e.message);
+      console.log('Response was:', claudeResult.message.substring(0, 500));
+      return;
+    }
+
+    if (!Array.isArray(pulseItems) || pulseItems.length === 0) {
+      console.warn('⚠️ No pulse items extracted');
+      return;
+    }
+
+    // Save to Firebase (only new items)
+    const collection = db.collection('montgomery_pulse');
+    let savedCount = 0;
+
+    for (const item of pulseItems) {
+      try {
+        // Create a unique ID based on title + source to avoid duplicates
+        const itemId = Buffer.from(`${item.title}-${item.source}`).toString('base64').substring(0, 20);
+        
+        // Check if already exists
+        const existing = await collection.doc(itemId).get();
+        if (existing.exists) continue;
+
+        // Save new item
+        await collection.doc(itemId).set({
+          category: item.category || 'council',
+          title: item.title || 'Untitled',
+          summary: item.summary || '',
+          date: admin.firestore.FieldValue.serverTimestamp(),
+          deadline: item.deadline || null,
+          actionLink: item.actionLink || null,
+          actionLabel: item.actionLabel || null,
+          source: item.source || ''
+        });
+        
+        savedCount++;
+      } catch (error) {
+        console.error('❌ Error saving pulse item:', error.message);
+      }
+    }
+
+    console.log(`✅ Montgomery Pulse updated: ${savedCount} new items saved (${pulseItems.length} total extracted)`);
+
+  } catch (error) {
+    console.error('❌ Montgomery Pulse cron failed:', error.message);
+  }
+};
+
 // 1. Capital City Careers - Every 6 hours
 cron.schedule('0 */6 * * *', runJobsCron);
 
@@ -932,6 +1114,9 @@ cron.schedule('0 0 1 * *', runEconomyCron);
 
 // 4. Opportunity Finder - Every 24 hours
 cron.schedule('0 2 * * *', runOpportunityCron);
+
+// 5. Montgomery Pulse - Every 6 hours
+cron.schedule('0 */6 * * *', runMontgomeryPulseCron);
 
 async function initializeOnBoot() {
   // Initialize MCP tools once on process startup.
