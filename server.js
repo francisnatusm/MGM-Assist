@@ -7,14 +7,19 @@ require('dotenv').config();
 
 // Initialize Firebase Admin
 try {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH) {
-    const serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH);
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_PATH;
+
+  if (serviceAccountJson || serviceAccountPath) {
+    const serviceAccount = serviceAccountJson
+      ? JSON.parse(serviceAccountJson)
+      : require(serviceAccountPath);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount)
     });
     console.log("🔥 Firebase Admin initialized");
   } else {
-    console.warn("⚠️ FIREBASE_SERVICE_ACCOUNT_KEY_PATH not provided. Firebase features will be disabled until configured.");
+    console.warn("⚠️ FIREBASE service account not provided. Set FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_KEY_PATH.");
   }
 } catch (e) {
   console.error("🔥 Firebase init error:", e.message);
