@@ -633,10 +633,15 @@ app.get('/api/montgomery-pulse', async (req, res) => {
 
     const snapshot = await query.get();
     
-    let allItems = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    let allItems = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        // Convert Firestore Timestamp to ISO string for JSON
+        date: data.date?.toDate ? data.date.toDate().toISOString() : data.date
+      };
+    });
 
     // Client-side filtering by category
     if (category && category !== 'all') {
@@ -647,7 +652,7 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     const items = allItems.slice(offset, offset + limit);
 
     // Get the most recent item's date for "last updated"
-    const lastUpdated = items.length > 0 ? items[0].date : new Date();
+    const lastUpdated = items.length > 0 ? items[0].date : new Date().toISOString();
 
     res.json({ items, lastUpdated });
   } catch (error) {
