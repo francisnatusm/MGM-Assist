@@ -1,0 +1,28 @@
+{
+  "name": "MGM Assist - Montgomery Civic Intelligence",
+  "short_name": "MGM Assist",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0f1e",
+  "theme_color": "#f59e0b",
+  "description": "Montgomery's Smart Civic Intelligence Platform - Real-time civic updates, economic maps, and business intelligence",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["government", "news", "productivity"],
+  "lang": "en-US",
+  "dir": "ltr"
+}
