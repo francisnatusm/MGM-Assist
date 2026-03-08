@@ -1,0 +1,31 @@
+{
+  "name": "claude-chatbot",
+  "version": "1.0.0",
+  "description": "Chatbot powered by Claude AI with Bright Data web scraping",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "concurrently \"node mcp-server-brightdata.js\" \"node server.js\""
+  },
+  "keywords": [
+    "chatbot",
+    "claude",
+    "ai",
+    "mcp",
+    "brightdata"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "firebase-admin": "^13.7.0",
+    "node-cron": "^4.2.1",
+    "node-fetch": "^2.6.7"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
