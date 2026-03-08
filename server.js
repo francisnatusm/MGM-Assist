@@ -631,16 +631,20 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     let query = db.collection('montgomery_pulse')
       .orderBy('date', 'desc');
 
-    if (category && category !== 'all') {
-      query = query.where('category', '==', category);
-    }
-
-    const snapshot = await query.limit(limit).offset(offset).get();
+    const snapshot = await query.get();
     
-    const items = snapshot.docs.map(doc => ({
+    let allItems = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
     }));
+
+    // Client-side filtering by category
+    if (category && category !== 'all') {
+      allItems = allItems.filter(item => item.category === category);
+    }
+
+    // Apply pagination
+    const items = allItems.slice(offset, offset + limit);
 
     // Get the most recent item's date for "last updated"
     const lastUpdated = items.length > 0 ? items[0].date : new Date();
@@ -648,6 +652,27 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     res.json({ items, lastUpdated });
   } catch (error) {
     console.error('Error fetching Montgomery Pulse data:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Clear Montgomery Pulse collection (for debugging/resetting bad data)
+app.post('/api/admin/clear-pulse', async (req, res) => {
+  const db = getFirestore();
+  if (!db) return res.status(500).json({ error: 'Firebase not initialized' });
+  
+  try {
+    const collection = db.collection('montgomery_pulse');
+    const docs = await collection.listDocuments();
+    let deletedCount = 0;
+    
+    for (const doc of docs) {
+      await doc.delete();
+      deletedCount++;
+    }
+    
+    res.json({ success: true, deleted: deletedCount });
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
@@ -682,6 +707,133 @@ app.post('/api/dashboard/refresh/:dashboard', async (req, res) => {
   } catch (error) {
     console.error(`Error refreshing ${req.params.dashboard}:`, error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Debug endpoint for Montgomery Pulse with detailed logging
+app.get('/api/debug/pulse-scrape', async (req, res) => {
+  const logs = [];
+  const log = (msg) => {
+    console.log(msg);
+    logs.push(msg);
+  };
+
+  try {
+    log("🔄 Starting Montgomery Pulse debug scrape...");
+    const db = getFirestore();
+    if (!db) {
+      log("❌ Firebase not initialized");
+      return res.json({ success: false, error: "Firebase not initialized", logs });
+    }
+
+    if (MCP_TOOLS.length === 0) {
+      log("⚙️ Initializing MCP tools...");
+      await initializeMCPTools();
+      log(`✅ MCP tools loaded: ${MCP_TOOLS.length} tools, source: ${ACTIVE_MCP_SOURCE}`);
+    }
+
+    const montgomeryUrls = [
+      'https://www.montgomeryal.gov/government/stay-informed/city-news'
+    ];
+
+    log(`🌐 Scraping ${montgomeryUrls.length} URLs...`);
+    const allScrapedContent = [];
+
+    for (const url of montgomeryUrls) {
+      try {
+        log(` Scraping: ${url}`);
+        let scrapeResult;
+        
+        if (ACTIVE_MCP_SOURCE === 'brightdata') {
+          log(`  Using Bright Data MCP...`);
+          scrapeResult = await executeMcpTool('scrape_as_markdown', { url });
+        } else {
+          log(`  Using custom MCP fallback...`);
+          scrapeResult = await executeMcpTool('fetch_webpage_content', { 
+            url, 
+            parse_type: 'text' 
+          });
+        }
+
+        if (scrapeResult.ok && scrapeResult.result) {
+          let content = scrapeResult.result.content || scrapeResult.result.data || scrapeResult.result || '';
+          // Ensure content is a string
+          if (typeof content !== 'string') {
+            content = JSON.stringify(content);
+          }
+          log(`  ✅ Scraped ${content.length} characters`);
+          allScrapedContent.push({ url, content: content.substring(0, 5000) });
+        } else {
+          log(`  ❌ Scrape failed: ${JSON.stringify(scrapeResult).substring(0, 200)}`);
+        }
+      } catch (error) {
+        log(`  ❌ Error: ${error.message}`);
+      }
+    }
+
+    if (allScrapedContent.length === 0) {
+      log('⚠️ No content scraped');
+      return res.json({ success: false, error: "No content scraped", logs });
+    }
+
+    log(`📤 Sending ${allScrapedContent.length} items to Claude for processing...`);
+    const prompt = `Extract news items from this Montgomery, AL government website content. Return a JSON array with this structure:
+[{"category": "council"|"mayor"|"ordinance"|"deadline"|"meeting", "title": "headline", "summary": "2-3 sentences", "deadline": "YYYY-MM-DD"|null, "actionLink": "url"|null, "actionLabel": "Apply Now"|"Register"|"Read More"|null, "source": "${montgomeryUrls[0]}"}]
+
+Content: ${JSON.stringify(allScrapedContent[0].content).slice(0, 3000)}`;
+
+    const claudeResult = await runConversationWithTools(MODELS_TO_TRY[0], prompt);
+    
+    if (!claudeResult.ok) {
+      log(`❌ Claude processing failed: ${JSON.stringify(claudeResult)}`);
+      return res.json({ success: false, error: "Claude failed", claudeDetails: claudeResult, logs });
+    }
+
+    log(`✅ Claude responded with ${claudeResult.message.length} characters`);
+    
+    let pulseItems = [];
+    try {
+      const jsonMatch = claudeResult.message.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        pulseItems = JSON.parse(jsonMatch[0]);
+        log(`✅ Parsed ${pulseItems.length} items from Claude response`);
+      } else {
+        pulseItems = JSON.parse(claudeResult.message);
+        log(`✅ Parsed ${pulseItems.length} items directly`);
+      }
+    } catch (e) {
+      log(`❌ JSON parse error: ${e.message}`);
+      log(`Claude response: ${claudeResult.message.substring(0, 500)}`);
+      return res.json({ success: false, error: "Parse error", claudeResponse: claudeResult.message, logs });
+    }
+
+    log(`💾 Saving ${pulseItems.length} items to Firebase...`);
+    const collection = db.collection('montgomery_pulse');
+    let savedCount = 0;
+
+    for (const item of pulseItems) {
+      const itemId = Buffer.from(`${item.title}-${item.source||montgomeryUrls[0]}`).toString('base64').substring(0, 20);
+      const existing = await collection.doc(itemId).get();
+      if (!existing.exists) {
+        await collection.doc(itemId).set({
+          category: item.category || 'council',
+          title: item.title || 'Untitled',
+          summary: item.summary || '',
+          date: admin.firestore.FieldValue.serverTimestamp(),
+          deadline: item.deadline || null,
+          actionLink: item.actionLink || null,
+          actionLabel: item.actionLabel || null,
+          source: item.source || montgomeryUrls[0]
+        });
+        savedCount++;
+      }
+    }
+
+    log(`✅ Saved ${savedCount} new items (${pulseItems.length} total extracted)`);
+    res.json({ success: true, saved: savedCount, extracted: pulseItems.length, items: pulseItems, logs });
+  } catch (error) {
+    log(`❌ Fatal error: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message, stack: error.stack, logs });
   }
 });
 
@@ -997,7 +1149,11 @@ const runMontgomeryPulseCron = async () => {
         }
 
         if (scrapeResult.ok && scrapeResult.result) {
-          const content = scrapeResult.result.content || scrapeResult.result.data || '';
+          let content = scrapeResult.result.content || scrapeResult.result.data || scrapeResult.result || '';
+          // Ensure content is a string
+          if (typeof content !== 'string') {
+            content = JSON.stringify(content);
+          }
           allScrapedContent.push({ url, content: content.substring(0, 5000) });
         }
       } catch (error) {
@@ -1038,30 +1194,66 @@ const runMontgomeryPulseCron = async () => {
     Scraped content from Montgomery websites:
     ${JSON.stringify(allScrapedContent).slice(0, 8000)}`;
 
-    const claudeResult = await runConversationWithTools(MODELS_TO_TRY[0], prompt);
-    
-    if (!claudeResult.ok) {
-      console.error('❌ Claude processing failed');
-      return;
-    }
-
     let pulseItems = [];
-    try {
-      // Try to parse Claude's response as JSON
-      const jsonMatch = claudeResult.message.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        pulseItems = JSON.parse(jsonMatch[0]);
-      } else {
-        pulseItems = JSON.parse(claudeResult.message);
+    const buildFallbackItems = () => {
+      return allScrapedContent.map(({ url, content }) => {
+        const lowerUrl = url.toLowerCase();
+        let category = 'meeting';
+        let categoryLabel = 'Meeting';
+        if (lowerUrl.includes('council')) { category = 'council'; categoryLabel = 'Council'; }
+        else if (lowerUrl.includes('mayor')) { category = 'mayor'; categoryLabel = 'Mayor'; }
+        else if (lowerUrl.includes('notice')) { category = 'deadline'; categoryLabel = 'Notice'; }
+        else if (lowerUrl.includes('news')) { category = 'ordinance'; categoryLabel = 'News'; }
+
+        // Extract text from Bright Data's structured response
+        let extractedText = '';
+        try {
+          if (typeof content === 'string' && content.startsWith('[')) {
+            const parsed = JSON.parse(content);
+            if (Array.isArray(parsed)) {
+              extractedText = parsed.map(item => item.text || '').join(' ').trim();
+            }
+          } else {
+            extractedText = String(content || '');
+          }
+        } catch {
+          extractedText = String(content || '');
+        }
+
+        const compact = extractedText.replace(/\s+/g, ' ').trim();
+        const title = `${categoryLabel} Update from Montgomery`;
+        const summary = compact.slice(0, 300) || `Latest ${categoryLabel.toLowerCase()} update from City of Montgomery. Visit the link for full details and official announcements.`;
+
+        return {
+          category,
+          title,
+          summary,
+          deadline: null,
+          actionLink: url,
+          actionLabel: 'Read More',
+          source: url
+        };
+      });
+    };
+
+    const claudeResult = await runConversationWithTools(MODELS_TO_TRY[0], prompt);
+
+    if (!claudeResult.ok) {
+      console.warn('⚠️ Claude processing failed, using fallback extraction:', claudeResult.data?.error?.message || claudeResult.status);
+      pulseItems = buildFallbackItems();
+    } else {
+      try {
+        // Try to parse Claude's response as JSON
+        const jsonMatch = claudeResult.message.match(/\[[\s\S]*\]/);
+        pulseItems = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(claudeResult.message);
+      } catch (e) {
+        console.warn('⚠️ Failed to parse Claude response, using fallback extraction:', e.message);
+        pulseItems = buildFallbackItems();
       }
-    } catch (e) {
-      console.warn('⚠️ Failed to parse Claude response:', e.message);
-      console.log('Response was:', claudeResult.message.substring(0, 500));
-      return;
     }
 
     if (!Array.isArray(pulseItems) || pulseItems.length === 0) {
-      console.warn('⚠️ No pulse items extracted');
+      console.warn('⚠️ No pulse items extracted; fallback produced no records');
       return;
     }
 
