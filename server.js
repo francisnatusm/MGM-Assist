@@ -854,164 +854,137 @@ const getFirestore = () => {
   }
 };
 
-// 1. Capital City Careers - Scrape job listings from Indeed, LinkedIn, ZipRecruiter
+// 1. Capital City Careers - Fetch real job listings from free public APIs
 const runJobsCron = async () => {
   console.log("🔄 Running Capital City Careers Task...");
   const db = getFirestore();
   if (!db) return;
 
   try {
-    // Check if MCP tools are available
-    if (MCP_TOOLS.length === 0) {
-      await initializeMCPTools();
+    const allJobs = [];
+    const apiResults = { success: 0, failed: 0 };
+
+    // --- Source 1: USAJobs API (US federal/government jobs in Montgomery, AL) ---
+    // Free, no API key needed, perfect for a civic platform in the state capital
+    try {
+      const usajobsRes = await fetch(
+        'https://data.usajobs.gov/api/search?LocationName=Montgomery%2C+Alabama&ResultsPerPage=25',
+        {
+          headers: {
+            'Host': 'data.usajobs.gov',
+            'User-Agent': 'mgm-assist@gmail.com',
+            'Authorization-Key': ''
+          }
+        }
+      );
+      if (usajobsRes.ok) {
+        const usajobsData = await usajobsRes.json();
+        const items = usajobsData?.SearchResult?.SearchResultItems || [];
+        for (const item of items) {
+          const mv = item.MatchedObjectDescriptor;
+          if (!mv) continue;
+          const salaryMin = mv.PositionRemuneration?.[0]?.MinimumRange;
+          const salaryMax = mv.PositionRemuneration?.[0]?.MaximumRange;
+          const salaryInterval = mv.PositionRemuneration?.[0]?.RateIntervalCode;
+          const salary = salaryMin
+            ? `$${Number(salaryMin).toLocaleString()}${salaryMax ? '–$' + Number(salaryMax).toLocaleString() : ''} ${salaryInterval || ''}`
+            : null;
+          allJobs.push({
+            title: mv.PositionTitle || 'Government Position',
+            company: mv.OrganizationName || 'U.S. Federal Government',
+            postedTime: mv.PublicationStartDate ? new Date(mv.PublicationStartDate).toLocaleDateString() : 'Recently posted',
+            salary,
+            url: mv.PositionURI || 'https://www.usajobs.gov',
+            source: 'USAJobs'
+          });
+        }
+        console.log(`✅ USAJobs: ${items.length} federal jobs fetched`);
+        apiResults.success++;
+      } else {
+        console.warn(`⚠️ USAJobs returned ${usajobsRes.status}`);
+        apiResults.failed++;
+      }
+    } catch (e) {
+      console.error('❌ USAJobs fetch error:', e.message);
+      apiResults.failed++;
     }
 
-    // Scrape jobs from multiple sources using Bright Data MCP
-    const jobSources = [
-      { site: 'Indeed', url: 'https://www.indeed.com/jobs?q=&l=Montgomery%2C+AL' },
-      { site: 'LinkedIn', url: 'https://www.linkedin.com/jobs/search?location=Montgomery%2C%20Alabama' },
-      { site: 'ZipRecruiter', url: 'https://www.ziprecruiter.com/jobs-search?location=Montgomery%2C%20AL' }
-    ];
-
-    const allJobs = [];
-    const scrapingResults = { success: 0, failed: 0 };
-
-    // Fallback: extract jobs directly from raw scraped data without Claude
-    const extractJobsFromRawData = (rawData, sourceSite, sourceUrl) => {
-      const jobs = [];
-      try {
-        // Case 1: Bright Data returned structured array with fields
-        let items = rawData;
-        if (typeof rawData === 'string') {
-          try { items = JSON.parse(rawData); } catch { items = null; }
+    // --- Source 2: Alabama state job board RSS feed ---
+    try {
+      const alabamaRes = await fetch(
+        'https://www.governmentjobs.com/careers/montgomery/rss',
+        { headers: { 'User-Agent': 'Mozilla/5.0 MGM-Assist/1.0' } }
+      );
+      if (alabamaRes.ok) {
+        const xml = await alabamaRes.text();
+        // Parse RSS items with simple regex (no external XML parser needed)
+        const itemMatches = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+        for (const match of itemMatches.slice(0, 15)) {
+          const block = match[1];
+          const title = (block.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || block.match(/<title>(.*?)<\/title>/))?.[1]?.trim();
+          const link = (block.match(/<link>(.*?)<\/link>/))?.[1]?.trim();
+          const dept = (block.match(/<department><!\[CDATA\[(.*?)\]\]><\/department>/) || [])?.[1]?.trim();
+          const salary = (block.match(/<salary><!\[CDATA\[(.*?)\]\]><\/salary>/) || [])?.[1]?.trim();
+          const pubDate = (block.match(/<pubDate>(.*?)<\/pubDate>/))?.[1]?.trim();
+          if (title) {
+            allJobs.push({
+              title,
+              company: dept || 'City of Montgomery',
+              postedTime: pubDate ? new Date(pubDate).toLocaleDateString() : 'Recently posted',
+              salary: salary || null,
+              url: link || 'https://www.governmentjobs.com/careers/montgomery',
+              source: 'City of Montgomery'
+            });
+          }
         }
-
-        if (Array.isArray(items)) {
-          for (const item of items) {
-            const title = item.job_title || item.title || item.name || item.position || '';
-            const company = item.company || item.employer || item.organization || '';
+        console.log(`✅ City of Montgomery jobs: ${itemMatches.length} listings fetched`);
+        apiResults.success++;
+      } else {
+        // Fallback: try Alabama state jobs
+        const stateRes = await fetch(
+          'https://www.governmentjobs.com/careers/alabama/rss',
+          { headers: { 'User-Agent': 'Mozilla/5.0 MGM-Assist/1.0' } }
+        );
+        if (stateRes.ok) {
+          const xml = await stateRes.text();
+          const itemMatches = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+          for (const match of itemMatches.slice(0, 10)) {
+            const block = match[1];
+            const title = (block.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || block.match(/<title>(.*?)<\/title>/))?.[1]?.trim();
+            const link = (block.match(/<link>(.*?)<\/link>/))?.[1]?.trim();
+            const dept = (block.match(/<department><!\[CDATA\[(.*?)\]\]><\/department>/) || [])?.[1]?.trim();
             if (title) {
-              jobs.push({
-                title: String(title).trim(),
-                company: String(company || 'Montgomery Employer').trim(),
-                postedTime: item.posted_date || item.date || 'Recently posted',
-                salary: item.salary || item.pay || null,
-                url: item.job_url || item.url || item.link || sourceUrl,
-                source: sourceSite
-              });
-            }
-          }
-        }
-
-        // Case 2: Flat object with arrays (e.g. {job_title: [...], company: [...]})
-        if (jobs.length === 0 && rawData && typeof rawData === 'object' && !Array.isArray(rawData)) {
-          const titles = rawData.job_title || rawData.titles || [];
-          const companies = rawData.company || rawData.companies || [];
-          const urls = rawData.job_url || rawData.urls || [];
-          const salaries = rawData.salary || rawData.salaries || [];
-          const dates = rawData.posted_date || rawData.dates || [];
-          if (Array.isArray(titles)) {
-            for (let i = 0; i < titles.length; i++) {
-              if (titles[i]) {
-                jobs.push({
-                  title: String(titles[i]).trim(),
-                  company: String(companies[i] || 'Montgomery Employer').trim(),
-                  postedTime: dates[i] || 'Recently posted',
-                  salary: salaries[i] || null,
-                  url: urls[i] || sourceUrl,
-                  source: sourceSite
-                });
-              }
-            }
-          }
-        }
-
-        // Case 3: Plain text/markdown — extract lines that look like job titles
-        if (jobs.length === 0) {
-          const text = typeof rawData === 'string' ? rawData : JSON.stringify(rawData);
-          const lines = text.split(/\n/).map(l => l.trim()).filter(l => l.length > 5 && l.length < 120);
-          // Look for lines near keywords like "Apply", "Full-time", "Part-time", known Montgomery companies
-          for (let i = 0; i < lines.length && jobs.length < 10; i++) {
-            const line = lines[i];
-            if (/full.time|part.time|contract|apply|hiring|opening|position|role|job/i.test(line)) {
-              jobs.push({
-                title: line.replace(/[#*>_]/g, '').trim(),
-                company: 'Montgomery Employer',
+              allJobs.push({
+                title,
+                company: dept || 'State of Alabama',
                 postedTime: 'Recently posted',
                 salary: null,
-                url: sourceUrl,
-                source: sourceSite
+                url: link || 'https://www.governmentjobs.com/careers/alabama',
+                source: 'State of Alabama'
               });
             }
           }
-        }
-      } catch (e) {
-        console.warn(`⚠️ Fallback extraction error for ${sourceSite}:`, e.message);
-      }
-      return jobs;
-    };
-
-    for (const source of jobSources) {
-      try {
-        // Use web_scraper tool from Bright Data MCP
-        const scrapeResult = await executeMcpTool('web_scraper', {
-          url: source.url,
-          extract: ['job_title', 'company', 'location', 'posted_date', 'salary', 'job_url']
-        });
-
-        if (scrapeResult.ok && scrapeResult.result?.data) {
-          const rawData = scrapeResult.result.data;
-
-          // Try Claude first
-          let claudeSucceeded = false;
-          const cleaningPrompt = `Extract and structure the job listings from this data into a clean JSON array. Each job should have: title, company, postedTime, salary (or null), url. Return ONLY valid JSON array, no extra text. Data: ${JSON.stringify(rawData).slice(0, 3000)}`;
-          
-          const claudeResult = await runConversationWithTools(MODELS_TO_TRY[0], cleaningPrompt);
-          if (claudeResult.ok) {
-            try {
-              const jsonMatch = claudeResult.message.match(/\[[\s\S]*\]/);
-              const jobs = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(claudeResult.message);
-              if (Array.isArray(jobs) && jobs.length > 0) {
-                allJobs.push(...jobs.map(job => ({ ...job, source: source.site })));
-                scrapingResults.success++;
-                claudeSucceeded = true;
-              }
-            } catch (e) {
-              console.warn(`⚠️ Failed to parse Claude response for ${source.site}, using fallback`);
-            }
-          }
-
-          // Fallback: extract directly from raw scraped data
-          if (!claudeSucceeded) {
-            const fallbackJobs = extractJobsFromRawData(rawData, source.site, source.url);
-            if (fallbackJobs.length > 0) {
-              allJobs.push(...fallbackJobs);
-              scrapingResults.success++;
-              console.log(`✅ Fallback extracted ${fallbackJobs.length} jobs from ${source.site}`);
-            } else {
-              scrapingResults.failed++;
-            }
-          }
+          apiResults.success++;
         } else {
-          scrapingResults.failed++;
+          apiResults.failed++;
         }
-      } catch (error) {
-        console.error(`❌ Error scraping ${source.site}:`, error.message);
-        scrapingResults.failed++;
       }
+    } catch (e) {
+      console.error('❌ Government jobs RSS error:', e.message);
+      apiResults.failed++;
     }
 
     // Save to Firebase
     const jobsData = {
-      jobs: allJobs.slice(0, 50), // Top 50 jobs
+      jobs: allJobs.slice(0, 50),
       totalCount: allJobs.length,
       topIndustry: getTopIndustry(allJobs),
       lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-      scrapingStats: scrapingResults
+      scrapingStats: apiResults
     };
 
     await db.collection('dashboards').doc('capitalCityCareers').set(jobsData);
-    console.log(`✅ Capital City Careers updated: ${allJobs.length} jobs saved`);
+    console.log(`✅ Capital City Careers updated: ${allJobs.length} jobs saved (${apiResults.success} sources OK, ${apiResults.failed} failed)`);
 
   } catch (error) {
     console.error('❌ Capital City Careers cron failed:', error.message);
