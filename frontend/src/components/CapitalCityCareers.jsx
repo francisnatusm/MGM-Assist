@@ -63,7 +63,7 @@ const CapitalCityCareers = () => {
                     <p className="text-red-400 text-sm">Error: {error}</p>
                 ) : (
                     <>
-                        <p className="text-gray-400 text-sm mb-4">Live feed of Montgomery jobs (Indeed, LinkedIn, ZipRecruiter).</p>
+                        <p className="text-gray-400 text-sm mb-4">Live feed of Montgomery jobs.</p>
 
                         {/* Metrics */}
                         <div className="grid grid-cols-2 gap-4 mb-6">
