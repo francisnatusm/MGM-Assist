@@ -864,6 +864,8 @@ const runJobsCron = async () => {
   const USAJOBS_EMAIL = process.env.USAJOBS_EMAIL || '';
   const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID || '';
   const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY || '';
+  const hasUsaJobsCreds = Boolean(USAJOBS_API_KEY && USAJOBS_EMAIL);
+  const hasAdzunaCreds = Boolean(ADZUNA_APP_ID && ADZUNA_APP_KEY);
 
   try {
     const allJobs = [];
@@ -873,8 +875,26 @@ const runJobsCron = async () => {
       return normalized.includes('montgomery') && (normalized.includes('al') || normalized.includes('alabama'));
     };
 
+    const getUsaJobsLocation = (mv) => {
+      const display = Array.isArray(mv?.PositionLocationDisplay)
+        ? mv.PositionLocationDisplay.join(', ')
+        : (mv?.PositionLocationDisplay || '');
+      if (display) return display;
+
+      // Some USAJobs records do not include PositionLocationDisplay but include structured locations.
+      const first = Array.isArray(mv?.PositionLocation) ? mv.PositionLocation[0] : null;
+      if (first) {
+        const city = first.LocationName || first.CityName || first.City || '';
+        const state = first.CountrySubDivisionCode || first.State || '';
+        const country = first.CountryCode || 'US';
+        return [city, state, country].filter(Boolean).join(', ');
+      }
+
+      return '';
+    };
+
     // --- Source 1: USAJobs API (federal/government jobs in Montgomery, AL) ---
-    if (USAJOBS_API_KEY && USAJOBS_EMAIL) {
+    if (hasUsaJobsCreds) {
       try {
         const usajobsRes = await fetch(
           'https://data.usajobs.gov/api/search?LocationName=Montgomery%2C+Alabama&ResultsPerPage=25',
@@ -892,10 +912,9 @@ const runJobsCron = async () => {
           for (const item of items) {
             const mv = item.MatchedObjectDescriptor;
             if (!mv) continue;
-            const location = Array.isArray(mv.PositionLocationDisplay)
-              ? mv.PositionLocationDisplay.join(', ')
-              : (mv.PositionLocationDisplay || '');
-            if (!isMontgomeryAl(location)) continue;
+            const location = getUsaJobsLocation(mv);
+            // USAJobs query is already scoped to Montgomery; keep record unless it explicitly points elsewhere.
+            if (location && !isMontgomeryAl(location)) continue;
             const salaryMin = mv.PositionRemuneration?.[0]?.MinimumRange;
             const salaryMax = mv.PositionRemuneration?.[0]?.MaximumRange;
             const salaryInterval = mv.PositionRemuneration?.[0]?.RateIntervalCode;
@@ -928,7 +947,7 @@ const runJobsCron = async () => {
     }
 
     // --- Source 2: Adzuna API (private-sector jobs in Montgomery) ---
-    if (ADZUNA_APP_ID && ADZUNA_APP_KEY) {
+    if (hasAdzunaCreds) {
       try {
         const adzunaRes = await fetch(
           `https://api.adzuna.com/v1/api/jobs/us/search/1?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&where=montgomery+alabama&results_per_page=25&distance=15`,
@@ -976,15 +995,20 @@ const runJobsCron = async () => {
       await db.collection('dashboards').doc('capitalCityCareers').set(jobsData);
       console.log(`✅ Capital City Careers updated: ${allJobs.length} jobs saved`);
     } else {
+      const noApiCreds = !hasUsaJobsCreds && !hasAdzunaCreds;
       await db.collection('dashboards').doc('capitalCityCareers').set({
         jobs: [],
         totalCount: 0,
         topIndustry: 'N/A',
         lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
         scrapingStats: apiResults,
-        configError: 'API keys not configured. Add USAJOBS_API_KEY + USAJOBS_EMAIL (free: developer.usajobs.gov) or ADZUNA_APP_ID + ADZUNA_APP_KEY (free: developer.adzuna.com) to Vercel environment variables.'
+        configError: noApiCreds
+          ? 'API keys not configured. Add USAJOBS_API_KEY + USAJOBS_EMAIL (free: developer.usajobs.gov) or ADZUNA_APP_ID + ADZUNA_APP_KEY (free: developer.adzuna.com) to Vercel environment variables.'
+          : 'API credentials are configured, but no Montgomery-matching jobs were returned this run. Try refresh again shortly.'
       });
-      console.warn('⚠️ Capital City Careers: 0 jobs saved — no API keys configured');
+      console.warn(noApiCreds
+        ? '⚠️ Capital City Careers: 0 jobs saved — no API keys configured'
+        : '⚠️ Capital City Careers: 0 jobs saved — sources returned no Montgomery-matching jobs this run');
     }
 
   } catch (error) {
