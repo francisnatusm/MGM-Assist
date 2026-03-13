@@ -909,19 +909,18 @@ const runJobsCron = async () => {
         if (usajobsRes.ok) {
           const usajobsData = await usajobsRes.json();
           const items = usajobsData?.SearchResult?.SearchResultItems || [];
+          const allFetched = [];
           for (const item of items) {
             const mv = item.MatchedObjectDescriptor;
             if (!mv) continue;
             const location = getUsaJobsLocation(mv);
-            // USAJobs query is already scoped to Montgomery; keep record unless it explicitly points elsewhere.
-            if (location && !isMontgomeryAl(location)) continue;
             const salaryMin = mv.PositionRemuneration?.[0]?.MinimumRange;
             const salaryMax = mv.PositionRemuneration?.[0]?.MaximumRange;
             const salaryInterval = mv.PositionRemuneration?.[0]?.RateIntervalCode;
             const salary = salaryMin
               ? `$${Number(salaryMin).toLocaleString()}–$${Number(salaryMax || salaryMin).toLocaleString()} ${salaryInterval || ''}`.trim()
               : null;
-            allJobs.push({
+            allFetched.push({
               title: mv.PositionTitle || 'Government Position',
               company: mv.OrganizationName || 'U.S. Federal Government',
               location: location || 'Montgomery, AL',
@@ -931,7 +930,13 @@ const runJobsCron = async () => {
               source: 'USAJobs'
             });
           }
-          console.log(`✅ USAJobs: ${items.length} federal jobs fetched`);
+          // Prefer strict Montgomery-city matches; if none, show full result set labeled Nearby/Remote
+          const strict = allFetched.filter(j => isMontgomeryAl(j.location));
+          const toAdd = strict.length > 0
+            ? strict
+            : allFetched.map(j => ({ ...j, location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL' }));
+          allJobs.push(...toAdd);
+          console.log(`✅ USAJobs: ${items.length} fetched, ${strict.length} strict Montgomery, ${toAdd.length} shown`);
           apiResults.success++;
         } else {
           console.warn(`⚠️ USAJobs returned ${usajobsRes.status} - check USAJOBS_API_KEY and USAJOBS_EMAIL env vars`);
