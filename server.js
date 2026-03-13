@@ -876,6 +876,81 @@ const runJobsCron = async () => {
     const allJobs = [];
     const scrapingResults = { success: 0, failed: 0 };
 
+    // Fallback: extract jobs directly from raw scraped data without Claude
+    const extractJobsFromRawData = (rawData, sourceSite, sourceUrl) => {
+      const jobs = [];
+      try {
+        // Case 1: Bright Data returned structured array with fields
+        let items = rawData;
+        if (typeof rawData === 'string') {
+          try { items = JSON.parse(rawData); } catch { items = null; }
+        }
+
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            const title = item.job_title || item.title || item.name || item.position || '';
+            const company = item.company || item.employer || item.organization || '';
+            if (title) {
+              jobs.push({
+                title: String(title).trim(),
+                company: String(company || 'Montgomery Employer').trim(),
+                postedTime: item.posted_date || item.date || 'Recently posted',
+                salary: item.salary || item.pay || null,
+                url: item.job_url || item.url || item.link || sourceUrl,
+                source: sourceSite
+              });
+            }
+          }
+        }
+
+        // Case 2: Flat object with arrays (e.g. {job_title: [...], company: [...]})
+        if (jobs.length === 0 && rawData && typeof rawData === 'object' && !Array.isArray(rawData)) {
+          const titles = rawData.job_title || rawData.titles || [];
+          const companies = rawData.company || rawData.companies || [];
+          const urls = rawData.job_url || rawData.urls || [];
+          const salaries = rawData.salary || rawData.salaries || [];
+          const dates = rawData.posted_date || rawData.dates || [];
+          if (Array.isArray(titles)) {
+            for (let i = 0; i < titles.length; i++) {
+              if (titles[i]) {
+                jobs.push({
+                  title: String(titles[i]).trim(),
+                  company: String(companies[i] || 'Montgomery Employer').trim(),
+                  postedTime: dates[i] || 'Recently posted',
+                  salary: salaries[i] || null,
+                  url: urls[i] || sourceUrl,
+                  source: sourceSite
+                });
+              }
+            }
+          }
+        }
+
+        // Case 3: Plain text/markdown — extract lines that look like job titles
+        if (jobs.length === 0) {
+          const text = typeof rawData === 'string' ? rawData : JSON.stringify(rawData);
+          const lines = text.split(/\n/).map(l => l.trim()).filter(l => l.length > 5 && l.length < 120);
+          // Look for lines near keywords like "Apply", "Full-time", "Part-time", known Montgomery companies
+          for (let i = 0; i < lines.length && jobs.length < 10; i++) {
+            const line = lines[i];
+            if (/full.time|part.time|contract|apply|hiring|opening|position|role|job/i.test(line)) {
+              jobs.push({
+                title: line.replace(/[#*>_]/g, '').trim(),
+                company: 'Montgomery Employer',
+                postedTime: 'Recently posted',
+                salary: null,
+                url: sourceUrl,
+                source: sourceSite
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`⚠️ Fallback extraction error for ${sourceSite}:`, e.message);
+      }
+      return jobs;
+    };
+
     for (const source of jobSources) {
       try {
         // Use web_scraper tool from Bright Data MCP
@@ -885,17 +960,35 @@ const runJobsCron = async () => {
         });
 
         if (scrapeResult.ok && scrapeResult.result?.data) {
-          // Process scraped data with Claude to clean and structure it
-          const cleaningPrompt = `Extract and structure the job listings from this data into a clean JSON array. Each job should have: title, company, postedTime, salary (or null), url. Data: ${JSON.stringify(scrapeResult.result.data).slice(0, 3000)}`;
+          const rawData = scrapeResult.result.data;
+
+          // Try Claude first
+          let claudeSucceeded = false;
+          const cleaningPrompt = `Extract and structure the job listings from this data into a clean JSON array. Each job should have: title, company, postedTime, salary (or null), url. Return ONLY valid JSON array, no extra text. Data: ${JSON.stringify(rawData).slice(0, 3000)}`;
           
           const claudeResult = await runConversationWithTools(MODELS_TO_TRY[0], cleaningPrompt);
           if (claudeResult.ok) {
             try {
-              const jobs = JSON.parse(claudeResult.message);
-              allJobs.push(...jobs.map(job => ({ ...job, source: source.site })));
-              scrapingResults.success++;
+              const jsonMatch = claudeResult.message.match(/\[[\s\S]*\]/);
+              const jobs = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(claudeResult.message);
+              if (Array.isArray(jobs) && jobs.length > 0) {
+                allJobs.push(...jobs.map(job => ({ ...job, source: source.site })));
+                scrapingResults.success++;
+                claudeSucceeded = true;
+              }
             } catch (e) {
-              console.warn(`⚠️ Failed to parse Claude response for ${source.site}`);
+              console.warn(`⚠️ Failed to parse Claude response for ${source.site}, using fallback`);
+            }
+          }
+
+          // Fallback: extract directly from raw scraped data
+          if (!claudeSucceeded) {
+            const fallbackJobs = extractJobsFromRawData(rawData, source.site, source.url);
+            if (fallbackJobs.length > 0) {
+              allJobs.push(...fallbackJobs);
+              scrapingResults.success++;
+              console.log(`✅ Fallback extracted ${fallbackJobs.length} jobs from ${source.site}`);
+            } else {
               scrapingResults.failed++;
             }
           }
