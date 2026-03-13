@@ -860,131 +860,120 @@ const runJobsCron = async () => {
   const db = getFirestore();
   if (!db) return;
 
+  const USAJOBS_API_KEY = process.env.USAJOBS_API_KEY || '';
+  const USAJOBS_EMAIL = process.env.USAJOBS_EMAIL || '';
+  const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID || '';
+  const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY || '';
+
   try {
     const allJobs = [];
     const apiResults = { success: 0, failed: 0 };
 
-    // --- Source 1: USAJobs API (US federal/government jobs in Montgomery, AL) ---
-    // Free, no API key needed, perfect for a civic platform in the state capital
-    try {
-      const usajobsRes = await fetch(
-        'https://data.usajobs.gov/api/search?LocationName=Montgomery%2C+Alabama&ResultsPerPage=25',
-        {
-          headers: {
-            'Host': 'data.usajobs.gov',
-            'User-Agent': 'mgm-assist@gmail.com',
-            'Authorization-Key': ''
-          }
-        }
-      );
-      if (usajobsRes.ok) {
-        const usajobsData = await usajobsRes.json();
-        const items = usajobsData?.SearchResult?.SearchResultItems || [];
-        for (const item of items) {
-          const mv = item.MatchedObjectDescriptor;
-          if (!mv) continue;
-          const salaryMin = mv.PositionRemuneration?.[0]?.MinimumRange;
-          const salaryMax = mv.PositionRemuneration?.[0]?.MaximumRange;
-          const salaryInterval = mv.PositionRemuneration?.[0]?.RateIntervalCode;
-          const salary = salaryMin
-            ? `$${Number(salaryMin).toLocaleString()}${salaryMax ? '–$' + Number(salaryMax).toLocaleString() : ''} ${salaryInterval || ''}`
-            : null;
-          allJobs.push({
-            title: mv.PositionTitle || 'Government Position',
-            company: mv.OrganizationName || 'U.S. Federal Government',
-            postedTime: mv.PublicationStartDate ? new Date(mv.PublicationStartDate).toLocaleDateString() : 'Recently posted',
-            salary,
-            url: mv.PositionURI || 'https://www.usajobs.gov',
-            source: 'USAJobs'
-          });
-        }
-        console.log(`✅ USAJobs: ${items.length} federal jobs fetched`);
-        apiResults.success++;
-      } else {
-        console.warn(`⚠️ USAJobs returned ${usajobsRes.status}`);
-        apiResults.failed++;
-      }
-    } catch (e) {
-      console.error('❌ USAJobs fetch error:', e.message);
-      apiResults.failed++;
-    }
-
-    // --- Source 2: Alabama state job board RSS feed ---
-    try {
-      const alabamaRes = await fetch(
-        'https://www.governmentjobs.com/careers/montgomery/rss',
-        { headers: { 'User-Agent': 'Mozilla/5.0 MGM-Assist/1.0' } }
-      );
-      if (alabamaRes.ok) {
-        const xml = await alabamaRes.text();
-        // Parse RSS items with simple regex (no external XML parser needed)
-        const itemMatches = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-        for (const match of itemMatches.slice(0, 15)) {
-          const block = match[1];
-          const title = (block.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || block.match(/<title>(.*?)<\/title>/))?.[1]?.trim();
-          const link = (block.match(/<link>(.*?)<\/link>/))?.[1]?.trim();
-          const dept = (block.match(/<department><!\[CDATA\[(.*?)\]\]><\/department>/) || [])?.[1]?.trim();
-          const salary = (block.match(/<salary><!\[CDATA\[(.*?)\]\]><\/salary>/) || [])?.[1]?.trim();
-          const pubDate = (block.match(/<pubDate>(.*?)<\/pubDate>/))?.[1]?.trim();
-          if (title) {
-            allJobs.push({
-              title,
-              company: dept || 'City of Montgomery',
-              postedTime: pubDate ? new Date(pubDate).toLocaleDateString() : 'Recently posted',
-              salary: salary || null,
-              url: link || 'https://www.governmentjobs.com/careers/montgomery',
-              source: 'City of Montgomery'
-            });
-          }
-        }
-        console.log(`✅ City of Montgomery jobs: ${itemMatches.length} listings fetched`);
-        apiResults.success++;
-      } else {
-        // Fallback: try Alabama state jobs
-        const stateRes = await fetch(
-          'https://www.governmentjobs.com/careers/alabama/rss',
-          { headers: { 'User-Agent': 'Mozilla/5.0 MGM-Assist/1.0' } }
-        );
-        if (stateRes.ok) {
-          const xml = await stateRes.text();
-          const itemMatches = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-          for (const match of itemMatches.slice(0, 10)) {
-            const block = match[1];
-            const title = (block.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) || block.match(/<title>(.*?)<\/title>/))?.[1]?.trim();
-            const link = (block.match(/<link>(.*?)<\/link>/))?.[1]?.trim();
-            const dept = (block.match(/<department><!\[CDATA\[(.*?)\]\]><\/department>/) || [])?.[1]?.trim();
-            if (title) {
-              allJobs.push({
-                title,
-                company: dept || 'State of Alabama',
-                postedTime: 'Recently posted',
-                salary: null,
-                url: link || 'https://www.governmentjobs.com/careers/alabama',
-                source: 'State of Alabama'
-              });
+    // --- Source 1: USAJobs API (federal/government jobs in Montgomery, AL) ---
+    if (USAJOBS_API_KEY && USAJOBS_EMAIL) {
+      try {
+        const usajobsRes = await fetch(
+          'https://data.usajobs.gov/api/search?LocationName=Montgomery%2C+Alabama&ResultsPerPage=25',
+          {
+            headers: {
+              'Host': 'data.usajobs.gov',
+              'User-Agent': USAJOBS_EMAIL,
+              'Authorization-Key': USAJOBS_API_KEY
             }
           }
+        );
+        if (usajobsRes.ok) {
+          const usajobsData = await usajobsRes.json();
+          const items = usajobsData?.SearchResult?.SearchResultItems || [];
+          for (const item of items) {
+            const mv = item.MatchedObjectDescriptor;
+            if (!mv) continue;
+            const salaryMin = mv.PositionRemuneration?.[0]?.MinimumRange;
+            const salaryMax = mv.PositionRemuneration?.[0]?.MaximumRange;
+            const salaryInterval = mv.PositionRemuneration?.[0]?.RateIntervalCode;
+            const salary = salaryMin
+              ? `$${Number(salaryMin).toLocaleString()}–$${Number(salaryMax || salaryMin).toLocaleString()} ${salaryInterval || ''}`.trim()
+              : null;
+            allJobs.push({
+              title: mv.PositionTitle || 'Government Position',
+              company: mv.OrganizationName || 'U.S. Federal Government',
+              postedTime: mv.PublicationStartDate ? new Date(mv.PublicationStartDate).toLocaleDateString() : 'Recently posted',
+              salary,
+              url: mv.PositionURI || 'https://www.usajobs.gov',
+              source: 'USAJobs'
+            });
+          }
+          console.log(`✅ USAJobs: ${items.length} federal jobs fetched`);
           apiResults.success++;
         } else {
+          console.warn(`⚠️ USAJobs returned ${usajobsRes.status} - check USAJOBS_API_KEY and USAJOBS_EMAIL env vars`);
           apiResults.failed++;
         }
+      } catch (e) {
+        console.error('❌ USAJobs fetch error:', e.message);
+        apiResults.failed++;
       }
-    } catch (e) {
-      console.error('❌ Government jobs RSS error:', e.message);
+    } else {
+      console.warn('⚠️ USAJobs skipped: set USAJOBS_API_KEY + USAJOBS_EMAIL env vars. Register free at https://developer.usajobs.gov/apirequest/key');
       apiResults.failed++;
     }
 
-    // Save to Firebase
-    const jobsData = {
-      jobs: allJobs.slice(0, 50),
-      totalCount: allJobs.length,
-      topIndustry: getTopIndustry(allJobs),
-      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-      scrapingStats: apiResults
-    };
+    // --- Source 2: Adzuna API (private-sector jobs in Montgomery) ---
+    if (ADZUNA_APP_ID && ADZUNA_APP_KEY) {
+      try {
+        const adzunaRes = await fetch(
+          `https://api.adzuna.com/v1/api/jobs/us/search/1?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&where=montgomery+alabama&results_per_page=25&distance=15`,
+          { headers: { 'User-Agent': 'MGM-Assist/1.0' } }
+        );
+        if (adzunaRes.ok) {
+          const adzunaData = await adzunaRes.json();
+          const results = adzunaData?.results || [];
+          for (const job of results) {
+            allJobs.push({
+              title: job.title || 'Position',
+              company: job.company?.display_name || 'Montgomery Employer',
+              postedTime: job.created ? new Date(job.created).toLocaleDateString() : 'Recently posted',
+              salary: job.salary_min ? `$${Math.round(job.salary_min / 1000)}k–$${Math.round((job.salary_max || job.salary_min) / 1000)}k/yr` : null,
+              url: job.redirect_url || 'https://www.adzuna.com',
+              source: 'Adzuna'
+            });
+          }
+          console.log(`✅ Adzuna: ${results.length} jobs fetched`);
+          apiResults.success++;
+        } else {
+          console.warn(`⚠️ Adzuna returned ${adzunaRes.status}`);
+          apiResults.failed++;
+        }
+      } catch (e) {
+        console.error('❌ Adzuna fetch error:', e.message);
+        apiResults.failed++;
+      }
+    } else {
+      console.warn('⚠️ Adzuna skipped: set ADZUNA_APP_ID + ADZUNA_APP_KEY env vars. Register free at https://developer.adzuna.com/');
+    }
 
-    await db.collection('dashboards').doc('capitalCityCareers').set(jobsData);
-    console.log(`✅ Capital City Careers updated: ${allJobs.length} jobs saved (${apiResults.success} sources OK, ${apiResults.failed} failed)`);
+    // Save to Firebase only if we got real jobs
+    if (allJobs.length > 0) {
+      const jobsData = {
+        jobs: allJobs.slice(0, 50),
+        totalCount: allJobs.length,
+        topIndustry: getTopIndustry(allJobs),
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        scrapingStats: apiResults
+      };
+      await db.collection('dashboards').doc('capitalCityCareers').set(jobsData);
+      console.log(`✅ Capital City Careers updated: ${allJobs.length} jobs saved`);
+    } else {
+      await db.collection('dashboards').doc('capitalCityCareers').set({
+        jobs: [],
+        totalCount: 0,
+        topIndustry: 'N/A',
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        scrapingStats: apiResults,
+        configError: 'API keys not configured. Add USAJOBS_API_KEY + USAJOBS_EMAIL (free: developer.usajobs.gov) or ADZUNA_APP_ID + ADZUNA_APP_KEY (free: developer.adzuna.com) to Vercel environment variables.'
+      });
+      console.warn('⚠️ Capital City Careers: 0 jobs saved — no API keys configured');
+    }
 
   } catch (error) {
     console.error('❌ Capital City Careers cron failed:', error.message);
