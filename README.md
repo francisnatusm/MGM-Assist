@@ -360,7 +360,7 @@ Contributions welcome! Please:
 
 For questions or support:
 - GitHub Issues: [MGM-Assist/issues](https://github.com/francisnatusm/MGM-Assist/issues)
-- Live Demo: [mgm-assist.vercel.app](https://mgm-assist.vercel.app)
+- Live Demo: [mgm-assist.vercel.app](https://mgm-assist-946m.vercel.app/)
 
 ---
 
