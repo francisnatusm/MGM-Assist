@@ -868,6 +868,10 @@ const runJobsCron = async () => {
   try {
     const allJobs = [];
     const apiResults = { success: 0, failed: 0 };
+    const isMontgomeryAl = (locationText) => {
+      const normalized = String(locationText || '').toLowerCase();
+      return normalized.includes('montgomery') && (normalized.includes('al') || normalized.includes('alabama'));
+    };
 
     // --- Source 1: USAJobs API (federal/government jobs in Montgomery, AL) ---
     if (USAJOBS_API_KEY && USAJOBS_EMAIL) {
@@ -888,6 +892,10 @@ const runJobsCron = async () => {
           for (const item of items) {
             const mv = item.MatchedObjectDescriptor;
             if (!mv) continue;
+            const location = Array.isArray(mv.PositionLocationDisplay)
+              ? mv.PositionLocationDisplay.join(', ')
+              : (mv.PositionLocationDisplay || '');
+            if (!isMontgomeryAl(location)) continue;
             const salaryMin = mv.PositionRemuneration?.[0]?.MinimumRange;
             const salaryMax = mv.PositionRemuneration?.[0]?.MaximumRange;
             const salaryInterval = mv.PositionRemuneration?.[0]?.RateIntervalCode;
@@ -897,6 +905,7 @@ const runJobsCron = async () => {
             allJobs.push({
               title: mv.PositionTitle || 'Government Position',
               company: mv.OrganizationName || 'U.S. Federal Government',
+              location: location || 'Montgomery, AL',
               postedTime: mv.PublicationStartDate ? new Date(mv.PublicationStartDate).toLocaleDateString() : 'Recently posted',
               salary,
               url: mv.PositionURI || 'https://www.usajobs.gov',
@@ -929,9 +938,12 @@ const runJobsCron = async () => {
           const adzunaData = await adzunaRes.json();
           const results = adzunaData?.results || [];
           for (const job of results) {
+            const location = job.location?.display_name || '';
+            if (!isMontgomeryAl(location)) continue;
             allJobs.push({
               title: job.title || 'Position',
               company: job.company?.display_name || 'Montgomery Employer',
+              location: location || 'Montgomery, AL',
               postedTime: job.created ? new Date(job.created).toLocaleDateString() : 'Recently posted',
               salary: job.salary_min ? `$${Math.round(job.salary_min / 1000)}k–$${Math.round((job.salary_max || job.salary_min) / 1000)}k/yr` : null,
               url: job.redirect_url || 'https://www.adzuna.com',

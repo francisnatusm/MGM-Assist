@@ -63,7 +63,7 @@ const CapitalCityCareers = () => {
                     <p className="text-red-400 text-sm">Error: {error}</p>
                 ) : (
                     <>
-                        <p className="text-gray-400 text-sm mb-4">Live feed of Montgomery jobs (Indeed, LinkedIn, ZipRecruiter).</p>
+                        <p className="text-gray-400 text-sm mb-4">Live feed of jobs filtered to Montgomery, AL (USAJobs and optional Adzuna).</p>
 
                         {/* Metrics */}
                         <div className="grid grid-cols-2 gap-4 mb-6">
@@ -85,10 +85,11 @@ const CapitalCityCareers = () => {
                         <ul className="space-y-3">
                             {displayJobs.length > 0 ? (
                                 displayJobs.map((job, index) => (
-                                    <li key={index} className="p-3 bg-mgm-navy rounded border border-gray-800 flex justify-between items-center hover:border-mgm-cyan transition-colors cursor-pointer">
+                                    <li key={index} className="p-3 bg-mgm-navy rounded border border-gray-800 flex justify-between items-start hover:border-mgm-cyan transition-colors cursor-pointer">
                                         <div>
                                             <p className="font-medium text-gray-200">{job.title}</p>
                                             <p className="text-xs text-gray-500">{job.company}</p>
+                                            <p className="text-xs text-gray-500">{job.location || 'Montgomery, AL'}</p>
                                         </div>
                                         <span className="text-xs text-mgm-gold">{job.postedTime || 'Recent'}</span>
                                     </li>
