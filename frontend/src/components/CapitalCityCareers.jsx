@@ -63,7 +63,7 @@ const CapitalCityCareers = () => {
                     <p className="text-red-400 text-sm">Error: {error}</p>
                 ) : (
                     <>
-                        <p className="text-gray-400 text-sm mb-4">Live feed of jobs filtered to Montgomery, AL (USAJobs and optional Adzuna).</p>
+                        <p className="text-gray-400 text-sm mb-4">Live feed of Montgomery jobs (Indeed, LinkedIn, ZipRecruiter).</p>
 
                         {/* Metrics */}
                         <div className="grid grid-cols-2 gap-4 mb-6">
@@ -89,7 +89,12 @@ const CapitalCityCareers = () => {
                                         <div>
                                             <p className="font-medium text-gray-200">{job.title}</p>
                                             <p className="text-xs text-gray-500">{job.company}</p>
-                                            <p className="text-xs text-gray-500">{job.location || 'Montgomery, AL'}</p>
+                                            <div className="flex items-center gap-1 mt-0.5">
+                                                <p className="text-xs text-gray-500">{(job.location || 'Montgomery, AL').replace(' (Nearby/Remote)', '')}</p>
+                                                {job.location?.includes('(Nearby/Remote)') && (
+                                                    <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded-full">Near MGM</span>
+                                                )}
+                                            </div>
                                         </div>
                                         <span className="text-xs text-mgm-gold">{job.postedTime || 'Recent'}</span>
                                     </li>
