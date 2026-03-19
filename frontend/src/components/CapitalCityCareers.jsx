@@ -60,7 +60,7 @@ const CapitalCityCareers = () => {
                 </h2>
                 <div className="flex items-center gap-2">
                     <span className="text-xs bg-mgm-blue/20 text-mgm-blue px-2 py-1 rounded-full">
-                        {loading ? 'Loading...' : 'Updates every 6h'}
+                        {loading ? 'Loading...' : 'Daily'}
                     </span>
                     <button 
                         onClick={fetchData} 

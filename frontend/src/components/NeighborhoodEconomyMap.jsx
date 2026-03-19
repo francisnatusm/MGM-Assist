@@ -80,7 +80,7 @@ const NeighborhoodEconomyMap = () => {
                 </h2>
                 <div className="flex items-center gap-2">
                     <span className="text-xs bg-mgm-blue/20 text-mgm-blue px-2 py-1 rounded-full">
-                        {loading ? 'Loading...' : 'Monthly Census Data'}
+                        {loading ? 'Loading...' : 'Monthly'}
                     </span>
                     <button 
                         onClick={fetchData} 

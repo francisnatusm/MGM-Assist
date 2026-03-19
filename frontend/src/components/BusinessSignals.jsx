@@ -44,7 +44,7 @@ const BusinessSignals = () => {
                 </h2>
                 <div className="flex items-center gap-2">
                     <span className="text-xs bg-mgm-gold/20 text-mgm-gold px-2 py-1 rounded-full">
-                        {loading ? 'Loading...' : 'Daily Updates'}
+                        {loading ? 'Loading...' : 'Daily'}
                     </span>
                     <button 
                         onClick={fetchData} 
