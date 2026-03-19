@@ -35,7 +35,21 @@ const CapitalCityCareers = () => {
         return () => clearInterval(interval);
     }, []);
 
-    const displayJobs = data.jobs?.slice(0, 3) || [];
+    const displayJobs = data.jobs || [];
+
+    const formatPostedTime = (value) => {
+        if (!value) return 'Recent';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return value;
+
+        const diffMs = Date.now() - parsed.getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        if (diffDays < 1) return 'Today';
+        if (diffDays === 1) return '1 day ago';
+        if (diffDays < 30) return `${diffDays} days ago`;
+
+        return parsed.toLocaleDateString();
+    };
 
     return (
         <div className="bg-mgm-card rounded-xl p-6 shadow-lg border border-gray-800 flex flex-col h-96">
@@ -96,7 +110,7 @@ const CapitalCityCareers = () => {
                                                 )}
                                             </div>
                                         </div>
-                                        <span className="text-xs text-mgm-gold">{job.postedTime || 'Recent'}</span>
+                                        <span className="text-xs text-mgm-gold">{formatPostedTime(job.postedTime)}</span>
                                     </li>
                                 ))
                             ) : (

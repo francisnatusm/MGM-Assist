@@ -870,6 +870,8 @@ const runJobsCron = async () => {
   try {
     const allJobs = [];
     const apiResults = { success: 0, failed: 0 };
+    const now = new Date();
+    const maxJobAgeDays = 120;
     const isMontgomeryAl = (locationText) => {
       const normalized = String(locationText || '').toLowerCase();
       return normalized.includes('montgomery') && (normalized.includes('al') || normalized.includes('alabama'));
@@ -913,6 +915,13 @@ const runJobsCron = async () => {
           for (const item of items) {
             const mv = item.MatchedObjectDescriptor;
             if (!mv) continue;
+            const publicationDate = mv.PublicationStartDate ? new Date(mv.PublicationStartDate) : null;
+            const closeDate = mv.ApplicationCloseDate ? new Date(mv.ApplicationCloseDate) : null;
+            if (publicationDate && !Number.isNaN(publicationDate.getTime())) {
+              const ageDays = (now.getTime() - publicationDate.getTime()) / (1000 * 60 * 60 * 24);
+              if (ageDays > maxJobAgeDays) continue;
+            }
+            if (closeDate && !Number.isNaN(closeDate.getTime()) && closeDate < now) continue;
             const location = getUsaJobsLocation(mv);
             const salaryMin = mv.PositionRemuneration?.[0]?.MinimumRange;
             const salaryMax = mv.PositionRemuneration?.[0]?.MaximumRange;
@@ -924,7 +933,9 @@ const runJobsCron = async () => {
               title: mv.PositionTitle || 'Government Position',
               company: mv.OrganizationName || 'U.S. Federal Government',
               location: location || 'Montgomery, AL',
-              postedTime: mv.PublicationStartDate ? new Date(mv.PublicationStartDate).toLocaleDateString() : 'Recently posted',
+              postedTime: publicationDate && !Number.isNaN(publicationDate.getTime())
+                ? publicationDate.toISOString()
+                : null,
               salary,
               url: mv.PositionURI || 'https://www.usajobs.gov',
               source: 'USAJobs'
