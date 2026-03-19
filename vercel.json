@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/cron/refresh/careers",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/cron/refresh/business",
@@ -19,7 +19,7 @@
     },
     {
       "path": "/api/cron/refresh/pulse",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 8 * * *"
     }
   ],
   "builds": [
