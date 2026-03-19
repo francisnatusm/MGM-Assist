@@ -683,35 +683,60 @@ app.post('/api/admin/clear-pulse', async (req, res) => {
 });
 
 // Trigger manual update for a dashboard (for testing/debugging)
+const refreshDashboardByName = async (dashboard) => {
+  switch (dashboard) {
+    case 'careers':
+      await runJobsCron();
+      return;
+    case 'business':
+      await runBusinessCron();
+      return;
+    case 'economy':
+      await runEconomyCron();
+      return;
+    case 'opportunities':
+      await runOpportunityCron();
+      return;
+    case 'pulse':
+    case 'montgomery-pulse':
+      await runMontgomeryPulseCron();
+      return;
+    default:
+      throw new Error('Invalid dashboard name');
+  }
+};
+
 app.post('/api/dashboard/refresh/:dashboard', async (req, res) => {
   try {
     const { dashboard } = req.params;
-    
-    switch (dashboard) {
-      case 'careers':
-        await runJobsCron();
-        break;
-      case 'business':
-        await runBusinessCron();
-        break;
-      case 'economy':
-        await runEconomyCron();
-        break;
-      case 'opportunities':
-        await runOpportunityCron();
-        break;
-      case 'pulse':
-      case 'montgomery-pulse':
-        await runMontgomeryPulseCron();
-        break;
-      default:
-        return res.status(400).json({ error: 'Invalid dashboard name' });
-    }
+    await refreshDashboardByName(dashboard);
 
     res.json({ success: true, message: `${dashboard} dashboard refresh triggered` });
   } catch (error) {
     console.error(`Error refreshing ${req.params.dashboard}:`, error);
-    res.status(500).json({ error: error.message });
+    const isInvalidDashboard = error.message === 'Invalid dashboard name';
+    res.status(isInvalidDashboard ? 400 : 500).json({ error: error.message });
+  }
+});
+
+// Vercel cron endpoint (GET) for automatic production updates.
+app.get('/api/cron/refresh/:dashboard', async (req, res) => {
+  try {
+    if (process.env.CRON_SECRET) {
+      const authHeader = req.headers.authorization || '';
+      const expected = `Bearer ${process.env.CRON_SECRET}`;
+      if (authHeader !== expected) {
+        return res.status(401).json({ error: 'Unauthorized cron request' });
+      }
+    }
+
+    const { dashboard } = req.params;
+    await refreshDashboardByName(dashboard);
+    res.json({ success: true, message: `${dashboard} cron refresh completed` });
+  } catch (error) {
+    console.error(`Cron refresh failed for ${req.params.dashboard}:`, error);
+    const isInvalidDashboard = error.message === 'Invalid dashboard name';
+    res.status(isInvalidDashboard ? 400 : 500).json({ error: error.message });
   }
 });
 

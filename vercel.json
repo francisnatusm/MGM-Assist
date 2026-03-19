@@ -1,5 +1,27 @@
 {
   "version": 2,
+  "crons": [
+    {
+      "path": "/api/cron/refresh/careers",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/refresh/business",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/refresh/economy",
+      "schedule": "0 0 1 * *"
+    },
+    {
+      "path": "/api/cron/refresh/opportunities",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/refresh/pulse",
+      "schedule": "0 */6 * * *"
+    }
+  ],
   "builds": [
     {
       "src": "server.js",
