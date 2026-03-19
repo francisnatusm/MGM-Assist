@@ -719,26 +719,21 @@ app.post('/api/dashboard/refresh/:dashboard', async (req, res) => {
   }
 });
 
-// Vercel cron endpoint (GET) for automatic production updates.
-app.get('/api/cron/refresh/:dashboard', async (req, res) => {
+// Vercel cron endpoints (GET) — one per dashboard for reliable serverless scheduling.
+const makeCronHandler = (name, fn) => async (req, res) => {
   try {
-    if (process.env.CRON_SECRET) {
-      const authHeader = req.headers.authorization || '';
-      const expected = `Bearer ${process.env.CRON_SECRET}`;
-      if (authHeader !== expected) {
-        return res.status(401).json({ error: 'Unauthorized cron request' });
-      }
-    }
-
-    const { dashboard } = req.params;
-    await refreshDashboardByName(dashboard);
-    res.json({ success: true, message: `${dashboard} cron refresh completed` });
+    await fn();
+    res.json({ success: true, message: `${name} cron refresh completed` });
   } catch (error) {
-    console.error(`Cron refresh failed for ${req.params.dashboard}:`, error);
-    const isInvalidDashboard = error.message === 'Invalid dashboard name';
-    res.status(isInvalidDashboard ? 400 : 500).json({ error: error.message });
+    console.error(`Cron refresh failed for ${name}:`, error.message);
+    res.status(500).json({ error: error.message });
   }
-});
+};
+app.get('/api/cron/refresh/careers', (req, res, next) => { makeCronHandler('careers', () => runJobsCron())(req, res); });
+app.get('/api/cron/refresh/business', (req, res, next) => { makeCronHandler('business', () => runBusinessCron())(req, res); });
+app.get('/api/cron/refresh/economy', (req, res, next) => { makeCronHandler('economy', () => runEconomyCron())(req, res); });
+app.get('/api/cron/refresh/opportunities', (req, res, next) => { makeCronHandler('opportunities', () => runOpportunityCron())(req, res); });
+app.get('/api/cron/refresh/pulse', (req, res, next) => { makeCronHandler('pulse', () => runMontgomeryPulseCron())(req, res); });
 
 // Debug endpoint for Montgomery Pulse with detailed logging
 app.get('/api/debug/pulse-scrape', async (req, res) => {
