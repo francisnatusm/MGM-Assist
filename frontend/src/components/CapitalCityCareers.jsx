@@ -35,7 +35,11 @@ const CapitalCityCareers = () => {
         return () => clearInterval(interval);
     }, []);
 
-    const displayJobs = data.jobs || [];
+    const displayJobs = [...(data.jobs || [])].sort((a, b) => {
+        const aTime = a?.postedTime ? new Date(a.postedTime).getTime() : 0;
+        const bTime = b?.postedTime ? new Date(b.postedTime).getTime() : 0;
+        return bTime - aTime;
+    });
 
     const formatPostedTime = (value) => {
         if (!value) return 'Recent';
