@@ -24,9 +24,9 @@ function App() {
         <MontgomeryPulse />
       </div>
 
-      <footer className="mb-20 lg:mb-8">
-        <div className="bg-mgm-card border border-gray-800 rounded-xl p-4 flex items-center justify-between gap-4">
-          <div>
+      <footer className="mb-24 lg:mb-8">
+        <div className="bg-mgm-card border border-gray-800 rounded-xl p-4 flex flex-col items-center justify-center text-center gap-3">
+          <div className="flex flex-col items-center">
             <p className="text-sm text-gray-300 font-semibold">Contact</p>
             <p className="text-xs text-gray-500">Connect with the project creator</p>
           </div>
