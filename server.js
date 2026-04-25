@@ -651,10 +651,11 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     // Apply pagination
     const items = allItems.slice(offset, offset + limit);
 
-    // Get the most recent item's date for "last updated"
-    const lastUpdated = items.length > 0 ? items[0].date : new Date().toISOString();
+    // Get parsed item timestamp and fetch timestamp
+    const lastFetched = new Date().toISOString();
+    const lastUpdated = items.length > 0 ? items[0].date : null;
 
-    res.json({ items, lastUpdated });
+    res.json({ items, lastUpdated, lastFetched });
   } catch (error) {
     console.error('Error fetching Montgomery Pulse data:', error);
     res.status(500).json({ error: error.message });
@@ -1247,12 +1248,16 @@ function categorizeJob(title) {
 
 // 5. Montgomery Pulse - Scrape civic news every 6 hours
 const runMontgomeryPulseCron = async () => {
-  console.log("🔄 Running Montgomery Pulse Task...");
+  console.log("🔄 Running Montgomery Pulse Task at", new Date().toISOString());
   const db = getFirestore();
   if (!db) return;
 
   try {
-    if (MCP_TOOLS.length === 0) await initializeMCPTools();
+    if (MCP_TOOLS.length === 0) {
+      console.log("📡 Initializing MCP tools...");
+      await initializeMCPTools();
+    }
+    console.log(`✅ MCP Source: ${ACTIVE_MCP_SOURCE} | Available Tools: ${MCP_TOOLS.length}`);
 
     const montgomeryUrls = [
       'https://www.montgomeryal.gov/government/stay-informed/city-news',
@@ -1267,38 +1272,49 @@ const runMontgomeryPulseCron = async () => {
     // Scrape all Montgomery URLs
     for (const url of montgomeryUrls) {
       try {
+        console.log(`📍 Scraping: ${url}`);
         let scrapeResult;
         
         // Try scrape_as_markdown first (Bright Data tool)
         if (ACTIVE_MCP_SOURCE === 'brightdata') {
+          console.log(`  → Using Bright Data MCP...`);
           scrapeResult = await executeMcpTool('scrape_as_markdown', { url });
         } else {
           // Fallback to custom fetch_webpage_content
+          console.log(`  → Using fallback fetch (non-Bright Data)...`);
           scrapeResult = await executeMcpTool('fetch_webpage_content', { 
             url, 
             parse_type: 'text' 
           });
         }
 
-        if (scrapeResult.ok && scrapeResult.result) {
+        if (scrapeResult.error) {
+          console.error(`  ❌ Scrape error: ${scrapeResult.error}`);
+        } else if (scrapeResult.ok && scrapeResult.result) {
           let content = scrapeResult.result.content || scrapeResult.result.data || scrapeResult.result || '';
           // Ensure content is a string
           if (typeof content !== 'string') {
             content = JSON.stringify(content);
           }
-          allScrapedContent.push({ url, content: content.substring(0, 5000) });
+          const truncated = content.substring(0, 5000);
+          console.log(`  ✅ Scraped ${content.length} chars (using first 5000)`);
+          allScrapedContent.push({ url, content: truncated });
+        } else {
+          console.warn(`  ⚠️ Unexpected result format:`, Object.keys(scrapeResult || {}));
         }
       } catch (error) {
         console.error(`❌ Error scraping ${url}:`, error.message);
       }
     }
 
+    console.log(`\n📊 Scrape Summary: ${allScrapedContent.length} URLs succeeded out of ${montgomeryUrls.length}`);
     if (allScrapedContent.length === 0) {
-      console.warn('⚠️ No content scraped from Montgomery URLs');
+      console.error('❌ CRITICAL: No content scraped from Montgomery URLs. Aborting pulse update.');
       return;
     }
 
     // Send to Claude for processing
+    console.log(`\n🤖 Sending scraped content to Claude for extraction...`);
     const prompt = `Read this scraped content from Montgomery, Alabama city government websites. 
     Extract each individual news item, announcement, public notice, council decision, mayor announcement, new ordinance, deadline, or upcoming meeting.
     
@@ -1328,6 +1344,7 @@ const runMontgomeryPulseCron = async () => {
 
     let pulseItems = [];
     const buildFallbackItems = () => {
+      console.log(`  ⚠️ Using fallback extraction (no Claude)...`);
       return allScrapedContent.map(({ url, content }) => {
         const lowerUrl = url.toLowerCase();
         let category = 'meeting';
@@ -1371,27 +1388,36 @@ const runMontgomeryPulseCron = async () => {
     const claudeResult = await runConversationWithTools(MODELS_TO_TRY[0], prompt);
 
     if (!claudeResult.ok) {
-      console.warn('⚠️ Claude processing failed, using fallback extraction:', claudeResult.data?.error?.message || claudeResult.status);
+      console.error(`  ❌ Claude call failed (${claudeResult.status}): ${claudeResult.data?.error?.message || 'unknown error'}`);
       pulseItems = buildFallbackItems();
     } else {
+      console.log(`  ✅ Claude responded`);
       try {
         // Try to parse Claude's response as JSON
         const jsonMatch = claudeResult.message.match(/\[[\s\S]*\]/);
-        pulseItems = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(claudeResult.message);
+        if (!jsonMatch) {
+          console.error(`  ❌ No JSON array found in Claude response. Raw first 200 chars:`, claudeResult.message.substring(0, 200));
+          pulseItems = buildFallbackItems();
+        } else {
+          pulseItems = JSON.parse(jsonMatch[0]);
+          console.log(`  ✅ Parsed ${pulseItems.length} items from Claude`);
+        }
       } catch (e) {
-        console.warn('⚠️ Failed to parse Claude response, using fallback extraction:', e.message);
+        console.error(`  ❌ Failed to parse Claude JSON: ${e.message}`);
         pulseItems = buildFallbackItems();
       }
     }
 
     if (!Array.isArray(pulseItems) || pulseItems.length === 0) {
-      console.warn('⚠️ No pulse items extracted; fallback produced no records');
+      console.error('❌ No pulse items extracted; fallback also produced no records');
       return;
     }
 
     // Save to Firebase (only new items)
+    console.log(`\n💾 Saving items to Firestore...`);
     const collection = db.collection('montgomery_pulse');
     let savedCount = 0;
+    let duplicateCount = 0;
 
     for (const item of pulseItems) {
       try {
@@ -1400,7 +1426,10 @@ const runMontgomeryPulseCron = async () => {
         
         // Check if already exists
         const existing = await collection.doc(itemId).get();
-        if (existing.exists) continue;
+        if (existing.exists) {
+          duplicateCount++;
+          continue;
+        }
 
         // Save new item
         await collection.doc(itemId).set({
@@ -1420,7 +1449,8 @@ const runMontgomeryPulseCron = async () => {
       }
     }
 
-    console.log(`✅ Montgomery Pulse updated: ${savedCount} new items saved (${pulseItems.length} total extracted)`);
+    console.log(`\n✅ COMPLETE: ${savedCount} new items saved | ${duplicateCount} duplicates skipped | ${pulseItems.length} total extracted`);
+    console.log(`   Last update timestamp stored in Firestore\n`);
 
   } catch (error) {
     console.error('❌ Montgomery Pulse cron failed:', error.message);
