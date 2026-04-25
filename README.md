@@ -15,7 +15,7 @@ MGM Assist is an intelligent civic engagement platform that provides Montgomery,
 - **Business Intelligence** - Trending business sectors and opportunities
 - **Career Opportunities** - Real-time job postings from Montgomery employers
 
-The system automatically scrapes, processes, and displays data every 6 hours, ensuring users always have access to the latest information.
+The system automatically scrapes, processes, and displays data daily, ensuring users always have access to the latest information.
 
 ---
 
@@ -31,7 +31,7 @@ The system automatically scrapes, processes, and displays data every 6 hours, en
 - Monthly census data updates
 
 ### 📡 **Montgomery Pulse (Live Civic Feed)**
-- Automated scraping of 5 Montgomery.gov URLs every 6 hours
+- Automated scraping of 5 Montgomery.gov URLs  daily
 - AI-powered content summarization (with fallback extraction)
 - Category filtering: Council, Mayor, Deadlines, Ordinances, Meetings
 - Real-time notifications on new civic updates
@@ -65,7 +65,7 @@ The system automatically scrapes, processes, and displays data every 6 hours, en
 - **Firebase Firestore** - Real-time database
 - **Claude AI (Anthropic)** - Content processing
 - **Bright Data MCP** - Web scraping engine
-- **node-cron** - Scheduled tasks (6-hour intervals)
+- **node-cron** - Scheduled tasks
 - **CORS** - Cross-origin resource sharing
 
 ### Frontend
@@ -263,13 +263,13 @@ The system runs cron jobs every **6 hours** to:
 3. **Update Firebase** - Save new items to Firestore
 4. **Clean Old Data** - Remove outdated entries (optional)
 
-Cron schedule: `0 */6 * * *` (runs at 12am, 6am, 12pm, 6pm daily)
+Cron schedule: Daily
 
 ---
 
 ## 🌐 Data Sources
 
-Montgomery Pulse scrapes these official sources every 6 hours:
+Montgomery Pulse scrapes these official sources daily:
 
 1. **Montgomery County Council** - `https://www.montgomerycountymd.gov/council/`
 2. **Mayor's Office** - `https://www.montgomerycountymd.gov/exec/`
