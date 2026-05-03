@@ -1,6 +1,11 @@
 /**
- * Hit dashboard cron routes (same as Vercel crons).
+ * Hit dashboard cron routes (same paths Vercel Cron calls).
+ * Schedules (UTC, see vercel.json): careers 06:00; business 00:00;
+ * economy monthly 1st 00:00; opportunities 02:00; pulse 08:00 (hour windows on Hobby).
+ * Hobby: Vercel may fire anytime within that hour.
+ *
  * MGM_API_BASE_URL=https://your-app.vercel.app node scripts/trigger-dashboard-crons.js
+ * If CRON_SECRET is set in Vercel, set it locally too for manual runs.
  */
 require('dotenv').config();
 const http = require('http');
@@ -26,9 +31,14 @@ function fetchUrl(url, timeoutMs = 600_000) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const lib = u.protocol === 'https:' ? https : http;
+    /** @type {import('http').RequestOptions} */
+    const opts = { method: 'GET', timeout: timeoutMs, headers: {} };
+    if (process.env.CRON_SECRET) {
+      opts.headers.Authorization = `Bearer ${process.env.CRON_SECRET}`;
+    }
     const req = lib.request(
       url,
-      { method: 'GET', timeout: timeoutMs },
+      opts,
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));

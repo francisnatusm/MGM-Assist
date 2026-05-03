@@ -782,8 +782,23 @@ app.post('/api/dashboard/refresh/:dashboard', async (req, res) => {
   }
 });
 
-// Vercel cron endpoints (GET) — one per dashboard for reliable serverless scheduling.
-const makeCronHandler = (name, fn) => async (req, res) => {
+// Vercel cron endpoints (GET). Schedules are defined in vercel.json (UTC):
+//   careers       0 6 * * *   — daily (~06:00–06:59 UTC on Hobby)
+//   business      0 0 * * *   — daily (~midnight hour UTC)
+//   economy       0 0 1 * *   — monthly, 1st (~midnight hour UTC)
+//   opportunities 0 2 * * *   — daily (~02:00–02:59 UTC)
+//   pulse         0 8 * * *   — daily (~08:00–08:59 UTC)
+// If CRON_SECRET is set in Vercel env, the platform sends Authorization: Bearer <secret>.
+function verifyVercelCron(req, res, next) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return next();
+  if ((req.headers.authorization || '') !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+const cronRefreshHandler = (name, fn) => async (req, res) => {
   try {
     await fn();
     res.json({ success: true, message: `${name} cron refresh completed` });
@@ -792,11 +807,12 @@ const makeCronHandler = (name, fn) => async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-app.get('/api/cron/refresh/careers', (req, res, next) => { makeCronHandler('careers', () => runJobsCron())(req, res); });
-app.get('/api/cron/refresh/business', (req, res, next) => { makeCronHandler('business', () => runBusinessCron())(req, res); });
-app.get('/api/cron/refresh/economy', (req, res, next) => { makeCronHandler('economy', () => runEconomyCron())(req, res); });
-app.get('/api/cron/refresh/opportunities', (req, res, next) => { makeCronHandler('opportunities', () => runOpportunityCron())(req, res); });
-app.get('/api/cron/refresh/pulse', (req, res, next) => { makeCronHandler('pulse', () => runMontgomeryPulseCron())(req, res); });
+
+app.get('/api/cron/refresh/careers', verifyVercelCron, cronRefreshHandler('careers', runJobsCron));
+app.get('/api/cron/refresh/business', verifyVercelCron, cronRefreshHandler('business', runBusinessCron));
+app.get('/api/cron/refresh/economy', verifyVercelCron, cronRefreshHandler('economy', runEconomyCron));
+app.get('/api/cron/refresh/opportunities', verifyVercelCron, cronRefreshHandler('opportunities', runOpportunityCron));
+app.get('/api/cron/refresh/pulse', verifyVercelCron, cronRefreshHandler('pulse', runMontgomeryPulseCron));
 
 // Debug endpoint for Montgomery Pulse with detailed logging
 app.get('/api/debug/pulse-scrape', async (req, res) => {
