@@ -27,9 +27,19 @@ try {
   console.error("🔥 Firebase init error:", e.message);
 }
 
-const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
-const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
-const { SSEClientTransport } = require('@modelcontextprotocol/sdk/client/sse.js');
+/** Lazy-load MCP SDK so dashboard/API cold starts succeed if the SDK fails on this runtime. */
+function loadMcpClientModules() {
+  try {
+    return {
+      Client: require('@modelcontextprotocol/sdk/client/index.js').Client,
+      StreamableHTTPClientTransport: require('@modelcontextprotocol/sdk/client/streamableHttp.js').StreamableHTTPClientTransport,
+      SSEClientTransport: require('@modelcontextprotocol/sdk/client/sse.js').SSEClientTransport
+    };
+  } catch (e) {
+    console.error('MCP SDK load failed:', e.message);
+    return null;
+  }
+}
 
 const app = express();
 const PORT = 3003;  // Changed from 3002 to avoid conflicts
@@ -84,6 +94,12 @@ class BrightDataMCPClient {
     if (this.isConnected && this.client) {
       return;
     }
+
+    const mcp = loadMcpClientModules();
+    if (!mcp) {
+      throw new Error('MCP SDK unavailable on this runtime');
+    }
+    const { Client, StreamableHTTPClientTransport, SSEClientTransport } = mcp;
 
     await this.close();
     const clientInfo = { name: 'mgm-assist-bridge', version: '1.0.0' };
