@@ -23,17 +23,5 @@
       "path": "/api/cron/refresh/pulse",
       "schedule": "0 8 * * *"
     }
-  ],
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/api"
-    }
-  ],
-  "functions": {
-    "api/index.js": {
-      "maxDuration": 60,
-      "memory": 1024
-    }
-  }
+  ]
 }
