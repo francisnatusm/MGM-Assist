@@ -4,4 +4,5 @@
 firebase-service-account.json
 *.log
 .vercel
-public/
+# Vite production output at repo root (generated on Vercel / local build)
+/public/
