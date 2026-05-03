@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "installCommand": "npm install && cd frontend && npm install",
+  "buildCommand": "npm run build",
   "crons": [
     {
       "path": "/api/cron/refresh/careers",
@@ -22,16 +24,16 @@
       "schedule": "0 8 * * *"
     }
   ],
-  "builds": [
+  "rewrites": [
     {
-      "src": "server.js",
-      "use": "@vercel/node"
+      "source": "/(.*)",
+      "destination": "/api"
     }
   ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "server.js"
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60,
+      "memory": 1024
     }
-  ]
+  }
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Briefcase, TrendingUp, RefreshCw } from 'lucide-react';
+import { Briefcase, RefreshCw } from 'lucide-react';
 import { apiUrl } from '../lib/api';
 
 const CapitalCityCareers = () => {
@@ -55,6 +55,17 @@ const CapitalCityCareers = () => {
         return parsed.toLocaleDateString();
     };
 
+    const formatDashboardRefreshed = (value) => {
+        if (!value) return null;
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return null;
+        const sec = Math.floor((Date.now() - parsed.getTime()) / 1000);
+        if (sec < 60) return 'just now';
+        if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+        if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+        return `${Math.floor(sec / 86400)}d ago`;
+    };
+
     return (
         <div className="bg-mgm-card rounded-xl p-6 shadow-lg border border-gray-800 flex flex-col h-96">
             <div className="flex justify-between items-center mb-4">
@@ -81,7 +92,26 @@ const CapitalCityCareers = () => {
                     <p className="text-red-400 text-sm">Error: {error}</p>
                 ) : (
                     <>
-                        <p className="text-gray-400 text-sm mb-4">Live feed of Montgomery jobs.</p>
+                        <p className="text-gray-400 text-sm mb-1">Live feed of Montgomery jobs.</p>
+                        {data.configError && (
+                            <p className="text-xs text-red-200 bg-red-500/15 border border-red-500/30 rounded-lg px-3 py-2 mb-3">
+                                {data.configError}
+                            </p>
+                        )}
+                        {data.feedStaleWarning && (
+                            <p className="text-xs text-amber-300/95 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2 mb-3">
+                                {data.feedStaleWarning}
+                            </p>
+                        )}
+                        {data.lastUpdated && (
+                            <p className="text-xs text-gray-500 mb-4">
+                                Dashboard refreshed {formatDashboardRefreshed(data.lastUpdated)}
+                                <span className="text-gray-600"> · “X days ago” on each row is the employer posting date from USAJOBS/Adzuna, not our scrape time.</span>
+                            </p>
+                        )}
+                        {!data.lastUpdated && (
+                            <p className="text-xs text-gray-500 mb-4">Employer posting dates on each row come from the job sites.</p>
+                        )}
 
                         {/* Metrics */}
                         <div className="grid grid-cols-2 gap-4 mb-6">
@@ -118,7 +148,16 @@ const CapitalCityCareers = () => {
                                     </li>
                                 ))
                             ) : (
-                                !loading && <p className="text-gray-500 text-sm text-center py-4">No jobs available yet</p>
+                                !loading && (
+                                    <div className="text-center py-4 space-y-2">
+                                        <p className="text-gray-500 text-sm">No jobs in the feed right now.</p>
+                                        {!data.configError && (
+                                            <p className="text-xs text-gray-600 max-w-md mx-auto">
+                                                If keys are set on Vercel, try the refresh control or check deployment logs.
+                                            </p>
+                                        )}
+                                    </div>
+                                )
                             )}
                         </ul>
                     </>

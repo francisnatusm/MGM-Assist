@@ -2,8 +2,10 @@ const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const cron = require('node-cron');
+const path = require('path');
 const admin = require('firebase-admin');
 require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env.local'), override: true });
 
 // Initialize Firebase Admin
 try {
@@ -35,7 +37,6 @@ const PORT = 3003;  // Changed from 3002 to avoid conflicts
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('.')); // Serve static files from current directory
 
 // API configuration
 const API_KEY = process.env.ANTHROPIC_API_KEY || '';
@@ -536,6 +537,28 @@ app.post('/api/chat', async (req, res) => {
 
 // -------- DASHBOARD DATA API ENDPOINTS -------- //
 
+/** Recursively convert Firestore Timestamps to ISO strings for JSON clients */
+function serializeForClient(value) {
+  if (value == null) return value;
+  if (typeof value.toDate === 'function') return value.toDate().toISOString();
+  if (value instanceof admin.firestore.Timestamp) return value.toDate().toISOString();
+  if (Array.isArray(value)) return value.map(serializeForClient);
+  if (typeof value === 'object' && value.constructor === Object) {
+    const o = {};
+    for (const [k, v] of Object.entries(value)) o[k] = serializeForClient(v);
+    return o;
+  }
+  return value;
+}
+
+function careersEnvConfigured() {
+  const k = process.env.USAJOBS_API_KEY || '';
+  const e = process.env.USAJOBS_EMAIL || process.env.USAJOBS_EMAI || '';
+  const a = process.env.ADZUNA_APP_ID || '';
+  const b = process.env.ADZUNA_APP_KEY || '';
+  return Boolean((k && e) || (a && b));
+}
+
 // Get Capital City Careers data
 app.get('/api/dashboard/careers', async (req, res) => {
   try {
@@ -544,12 +567,35 @@ app.get('/api/dashboard/careers', async (req, res) => {
       return res.status(503).json({ error: 'Firebase not configured' });
     }
 
-    const doc = await db.collection('dashboards').doc('capitalCityCareers').get();
-    if (!doc.exists) {
-      return res.json({ jobs: [], totalCount: 0, topIndustry: 'N/A', lastUpdated: null });
+    const ref = db.collection('dashboards').doc('capitalCityCareers');
+    let doc = await ref.get();
+    const raw = doc.exists ? doc.data() : {};
+    const n = Array.isArray(raw.jobs) ? raw.jobs.length : 0;
+
+    if (n === 0 && careersEnvConfigured()) {
+      try {
+        await runJobsCron();
+      } catch (e) {
+        console.error('GET /api/dashboard/careers live pull:', e.message);
+      }
+      doc = await ref.get();
     }
 
-    res.json(doc.data());
+    if (!doc.exists) {
+      return res.json(
+        serializeForClient({
+          jobs: [],
+          totalCount: 0,
+          topIndustry: 'N/A',
+          lastUpdated: null,
+          configError: careersEnvConfigured()
+            ? null
+            : 'Add USAJOBS_API_KEY + USAJOBS_EMAIL (or Adzuna keys) in Vercel, redeploy, then reload.'
+        })
+      );
+    }
+
+    res.json(serializeForClient(doc.data()));
   } catch (error) {
     console.error('Error fetching careers data:', error);
     res.status(500).json({ error: error.message });
@@ -569,7 +615,7 @@ app.get('/api/dashboard/business', async (req, res) => {
       return res.json({ newBusinesses: 0, closedBusinesses: 0, hotNeighborhoods: [], lastUpdated: null });
     }
 
-    res.json(doc.data());
+    res.json(serializeForClient(doc.data()));
   } catch (error) {
     console.error('Error fetching business data:', error);
     res.status(500).json({ error: error.message });
@@ -589,7 +635,7 @@ app.get('/api/dashboard/economy', async (req, res) => {
       return res.json({ neighborhoods: [], lastUpdated: null });
     }
 
-    res.json(doc.data());
+    res.json(serializeForClient(doc.data()));
   } catch (error) {
     console.error('Error fetching economy data:', error);
     res.status(500).json({ error: error.message });
@@ -609,7 +655,7 @@ app.get('/api/dashboard/opportunities', async (req, res) => {
       return res.json({ grants: [], training: [], fairs: [], lastUpdated: null });
     }
 
-    res.json(doc.data());
+    res.json(serializeForClient(doc.data()));
   } catch (error) {
     console.error('Error fetching opportunities data:', error);
     res.status(500).json({ error: error.message });
@@ -863,6 +909,16 @@ Content: ${JSON.stringify(allScrapedContent[0].content).slice(0, 3000)}`;
   }
 });
 
+// Production UI: Vite build output in /public (see frontend/vite.config.js).
+const PUBLIC_DIR = path.join(__dirname, 'public');
+app.use(express.static(PUBLIC_DIR));
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  if (req.path.startsWith('/api')) return next();
+  if (path.extname(req.path)) return next();
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'), (err) => (err ? next(err) : undefined));
+});
+
 // -------- CRON JOBS -------- //
 
 // Helper: Get Firestore instance
@@ -882,7 +938,7 @@ const runJobsCron = async () => {
   if (!db) return;
 
   const USAJOBS_API_KEY = process.env.USAJOBS_API_KEY || '';
-  const USAJOBS_EMAIL = process.env.USAJOBS_EMAIL || '';
+  const USAJOBS_EMAIL = process.env.USAJOBS_EMAIL || process.env.USAJOBS_EMAI || '';
   const ADZUNA_APP_ID = process.env.ADZUNA_APP_ID || '';
   const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY || '';
   const hasUsaJobsCreds = Boolean(USAJOBS_API_KEY && USAJOBS_EMAIL);
@@ -892,7 +948,7 @@ const runJobsCron = async () => {
     const allJobs = [];
     const apiResults = { success: 0, failed: 0 };
     const now = new Date();
-    const maxJobAgeDays = 120;
+    const maxJobAgeDays = 365;
     const isMontgomeryAl = (locationText) => {
       const normalized = String(locationText || '').toLowerCase();
       return normalized.includes('montgomery') && (normalized.includes('al') || normalized.includes('alabama'));
@@ -916,33 +972,44 @@ const runJobsCron = async () => {
       return '';
     };
 
-    // --- Source 1: USAJobs API (federal/government jobs in Montgomery, AL) ---
+    // --- Source 1: USAJobs (no manual Host header — breaks on some serverless runtimes) ---
     if (hasUsaJobsCreds) {
       try {
-        const usajobsRes = await fetch(
-          'https://data.usajobs.gov/api/search?LocationName=Montgomery%2C+Alabama&ResultsPerPage=25',
-          {
-            headers: {
-              'Host': 'data.usajobs.gov',
-              'User-Agent': USAJOBS_EMAIL,
-              'Authorization-Key': USAJOBS_API_KEY
-            }
-          }
-        );
-        if (usajobsRes.ok) {
+        const usajobsHeaders = {
+          'User-Agent': USAJOBS_EMAIL,
+          'Authorization-Key': USAJOBS_API_KEY
+        };
+        const queries = [
+          'LocationName=Montgomery%2C+Alabama&ResultsPerPage=50',
+          'Keyword=Montgomery&LocationName=Alabama&ResultsPerPage=50'
+        ];
+        let items = [];
+        let lastStatus = 0;
+        for (const q of queries) {
+          const usajobsRes = await fetch(`https://data.usajobs.gov/api/search?${q}`, { headers: usajobsHeaders });
+          lastStatus = usajobsRes.status;
+          if (!usajobsRes.ok) continue;
           const usajobsData = await usajobsRes.json();
-          const items = usajobsData?.SearchResult?.SearchResultItems || [];
+          const batch = usajobsData?.SearchResult?.SearchResultItems || [];
+          if (batch.length > 0) {
+            items = batch;
+            break;
+          }
+        }
+
+        if (items.length > 0) {
           const allFetched = [];
-          for (const item of items) {
-            const mv = item.MatchedObjectDescriptor;
-            if (!mv) continue;
+          const pushUsaJob = (mv, opts = {}) => {
+            if (!mv) return;
+            const skipAge = opts.skipAge === true;
+            const skipClose = opts.skipClose === true;
             const publicationDate = mv.PublicationStartDate ? new Date(mv.PublicationStartDate) : null;
             const closeDate = mv.ApplicationCloseDate ? new Date(mv.ApplicationCloseDate) : null;
-            if (publicationDate && !Number.isNaN(publicationDate.getTime())) {
+            if (!skipAge && publicationDate && !Number.isNaN(publicationDate.getTime())) {
               const ageDays = (now.getTime() - publicationDate.getTime()) / (1000 * 60 * 60 * 24);
-              if (ageDays > maxJobAgeDays) continue;
+              if (ageDays > maxJobAgeDays) return;
             }
-            if (closeDate && !Number.isNaN(closeDate.getTime()) && closeDate < now) continue;
+            if (!skipClose && closeDate && !Number.isNaN(closeDate.getTime()) && closeDate < now) return;
             const location = getUsaJobsLocation(mv);
             const salaryMin = mv.PositionRemuneration?.[0]?.MinimumRange;
             const salaryMax = mv.PositionRemuneration?.[0]?.MaximumRange;
@@ -961,8 +1028,14 @@ const runJobsCron = async () => {
               url: mv.PositionURI || 'https://www.usajobs.gov',
               source: 'USAJobs'
             });
+          };
+          for (const item of items) pushUsaJob(item.MatchedObjectDescriptor, {});
+          if (allFetched.length === 0) {
+            for (const item of items) pushUsaJob(item.MatchedObjectDescriptor, { skipAge: true });
           }
-          // Prefer strict Montgomery-city matches; if none, show full result set labeled Nearby/Remote
+          if (allFetched.length === 0) {
+            for (const item of items) pushUsaJob(item.MatchedObjectDescriptor, { skipAge: true, skipClose: true });
+          }
           const strict = allFetched.filter(j => isMontgomeryAl(j.location));
           const toAdd = strict.length > 0
             ? strict
@@ -971,7 +1044,7 @@ const runJobsCron = async () => {
           console.log(`✅ USAJobs: ${items.length} fetched, ${strict.length} strict Montgomery, ${toAdd.length} shown`);
           apiResults.success++;
         } else {
-          console.warn(`⚠️ USAJobs returned ${usajobsRes.status} - check USAJOBS_API_KEY and USAJOBS_EMAIL env vars`);
+          console.warn(`⚠️ USAJobs: no items (last HTTP ${lastStatus}) — check USAJOBS_API_KEY + USAJOBS_EMAIL`);
           apiResults.failed++;
         }
       } catch (e) {
@@ -993,20 +1066,28 @@ const runJobsCron = async () => {
         if (adzunaRes.ok) {
           const adzunaData = await adzunaRes.json();
           const results = adzunaData?.results || [];
+          const adzunaFetched = [];
           for (const job of results) {
             const location = job.location?.display_name || '';
-            if (!isMontgomeryAl(location)) continue;
-            allJobs.push({
+            adzunaFetched.push({
               title: job.title || 'Position',
               company: job.company?.display_name || 'Montgomery Employer',
               location: location || 'Montgomery, AL',
-              postedTime: job.created ? new Date(job.created).toLocaleDateString() : 'Recently posted',
+              postedTime: job.created ? new Date(job.created).toISOString() : 'Recently posted',
               salary: job.salary_min ? `$${Math.round(job.salary_min / 1000)}k–$${Math.round((job.salary_max || job.salary_min) / 1000)}k/yr` : null,
               url: job.redirect_url || 'https://www.adzuna.com',
               source: 'Adzuna'
             });
           }
-          console.log(`✅ Adzuna: ${results.length} jobs fetched`);
+          const strictAdz = adzunaFetched.filter(j => isMontgomeryAl(j.location));
+          const toAddAdz = strictAdz.length > 0
+            ? strictAdz
+            : adzunaFetched.map(j => ({
+                ...j,
+                location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL'
+              }));
+          allJobs.push(...toAddAdz);
+          console.log(`✅ Adzuna: ${results.length} fetched, ${strictAdz.length} strict, ${toAddAdz.length} added`);
           apiResults.success++;
         } else {
           console.warn(`⚠️ Adzuna returned ${adzunaRes.status}`);
@@ -1020,7 +1101,11 @@ const runJobsCron = async () => {
       console.warn('⚠️ Adzuna skipped: set ADZUNA_APP_ID + ADZUNA_APP_KEY env vars. Register free at https://developer.adzuna.com/');
     }
 
-    // Save to Firebase only if we got real jobs
+    const careersRef = db.collection('dashboards').doc('capitalCityCareers');
+    const prevSnap = await careersRef.get();
+    const prevData = prevSnap.exists ? prevSnap.data() : null;
+    const prevCount = Array.isArray(prevData?.jobs) ? prevData.jobs.length : 0;
+
     if (allJobs.length > 0) {
       const jobsData = {
         jobs: allJobs.slice(0, 50),
@@ -1029,23 +1114,39 @@ const runJobsCron = async () => {
         lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
         scrapingStats: apiResults
       };
-      await db.collection('dashboards').doc('capitalCityCareers').set(jobsData);
+      await careersRef.set(jobsData);
       console.log(`✅ Capital City Careers updated: ${allJobs.length} jobs saved`);
+    } else if (prevCount > 0) {
+      const noApiCreds = !hasUsaJobsCreds && !hasAdzunaCreds;
+      await careersRef.set(
+        {
+          scrapingStats: apiResults,
+          feedStaleWarning: noApiCreds
+            ? 'Job APIs are not configured on the server; showing your last saved listings. Add USAJOBS or Adzuna keys in Vercel to refresh.'
+            : 'Latest sync returned no new listings; showing your previous feed. Try again later or check Vercel logs for USAJOBS/Adzuna.',
+          configError: noApiCreds
+            ? 'API keys not configured. Add USAJOBS_API_KEY + USAJOBS_EMAIL (free: developer.usajobs.gov) or ADZUNA_APP_ID + ADZUNA_APP_KEY (free: developer.adzuna.com) to Vercel environment variables.'
+            : admin.firestore.FieldValue.delete()
+        },
+        { merge: true }
+      );
+      console.warn('⚠️ Capital City Careers: 0 this run — kept previous jobs in Firestore');
     } else {
       const noApiCreds = !hasUsaJobsCreds && !hasAdzunaCreds;
-      await db.collection('dashboards').doc('capitalCityCareers').set({
+      await careersRef.set({
         jobs: [],
         totalCount: 0,
         topIndustry: 'N/A',
         lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
         scrapingStats: apiResults,
+        feedStaleWarning: admin.firestore.FieldValue.delete(),
         configError: noApiCreds
           ? 'API keys not configured. Add USAJOBS_API_KEY + USAJOBS_EMAIL (free: developer.usajobs.gov) or ADZUNA_APP_ID + ADZUNA_APP_KEY (free: developer.adzuna.com) to Vercel environment variables.'
-          : 'API credentials are configured, but no Montgomery-matching jobs were returned this run. Try refresh again shortly.'
+          : 'No jobs returned this run. Confirm USAJOBS User-Agent email matches your developer.usajobs.gov profile; check Vercel logs.'
       });
       console.warn(noApiCreds
         ? '⚠️ Capital City Careers: 0 jobs saved — no API keys configured'
-        : '⚠️ Capital City Careers: 0 jobs saved — sources returned no Montgomery-matching jobs this run');
+        : '⚠️ Capital City Careers: 0 jobs saved — APIs returned no rows');
     }
 
   } catch (error) {
@@ -1457,20 +1558,13 @@ const runMontgomeryPulseCron = async () => {
   }
 };
 
-// 1. Capital City Careers - Every 6 hours
-cron.schedule('0 */6 * * *', runJobsCron);
-
-// 2. Business Signals - Every 24 hours
-cron.schedule('0 0 * * *', runBusinessCron);
-
-// 3. Neighborhood Economy Map - Monthly (1st day of month at midnight)
-cron.schedule('0 0 1 * *', runEconomyCron);
-
-// 4. Opportunity Finder - Every 24 hours
-cron.schedule('0 2 * * *', runOpportunityCron);
-
-// 5. Montgomery Pulse - Every 6 hours
-cron.schedule('0 */6 * * *', runMontgomeryPulseCron);
+if (process.env.VERCEL !== '1') {
+  cron.schedule('0 */6 * * *', runJobsCron);
+  cron.schedule('0 0 * * *', runBusinessCron);
+  cron.schedule('0 0 1 * *', runEconomyCron);
+  cron.schedule('0 2 * * *', runOpportunityCron);
+  cron.schedule('0 */6 * * *', runMontgomeryPulseCron);
+}
 
 async function initializeOnBoot() {
   // Initialize MCP tools once on process startup.

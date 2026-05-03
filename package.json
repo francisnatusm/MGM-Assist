@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "concurrently \"node mcp-server-brightdata.js\" \"node server.js\""
+    "dev": "concurrently \"node mcp-server-brightdata.js\" \"node server.js\"",
+    "build": "cd frontend && npm run build",
+    "refresh-dashboards": "node scripts/trigger-dashboard-crons.js"
   },
   "keywords": [
     "chatbot",
