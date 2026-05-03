@@ -1,0 +1,49 @@
+{
+  "version": 2,
+  "installCommand": "npm install && cd .. && npm install",
+  "builds": [
+    {
+      "src": "server-entry.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "../public"
+      }
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/server-entry.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/refresh/careers",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/refresh/business",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/refresh/economy",
+      "schedule": "0 0 1 * *"
+    },
+    {
+      "path": "/api/cron/refresh/opportunities",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/refresh/pulse",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}
