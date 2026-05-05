@@ -5,19 +5,20 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { apiUrl } from '../lib/api';
 
 /**
- * CARTO dark basemap aligned with mgm-card; raster grading keeps streets readable.
- * Terrain + sky added in onLoad.
+ * Voyager = clear streets, water, labels. Raster grading pulls it to a mid “dashboard”
+ * tone: not washed out, not crushed black—readable structures beside dark UI chrome.
+ * Terrain + sky in onLoad.
  */
 const BASE_MAP_STYLE = {
   version: 8,
-  name: 'economy-dark-pro',
+  name: 'economy-balanced',
   sources: {
     carto: {
       type: 'raster',
       tiles: [
-        'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+        'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+        'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+        'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png'
       ],
       tileSize: 256,
       attribution:
@@ -28,17 +29,17 @@ const BASE_MAP_STYLE = {
     {
       id: 'background',
       type: 'background',
-      paint: { 'background-color': '#111827' }
+      paint: { 'background-color': '#1e293b' }
     },
     {
       id: 'basemap',
       type: 'raster',
       source: 'carto',
       paint: {
-        'raster-saturation': 0.18,
-        'raster-contrast': 0.2,
-        'raster-brightness-min': 0.14,
-        'raster-brightness-max': 0.78
+        'raster-saturation': -0.05,
+        'raster-contrast': 0.16,
+        'raster-brightness-min': 0.38,
+        'raster-brightness-max': 0.72
       }
     }
   ]
@@ -124,17 +125,17 @@ const NeighborhoodEconomyMap = () => {
         url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
         tileSize: 256
       });
-      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.22 });
+      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.18 });
       if (!map.getLayer('sky')) {
         map.addLayer({
           id: 'sky',
           type: 'sky',
           paint: {
             'sky-type': 'atmosphere',
-            'sky-atmosphere-sun': [0.08, 72.0],
-            'sky-atmosphere-sun-intensity': 9,
-            'sky-atmosphere-color': '#2d3548',
-            'sky-atmosphere-halo-color': '#1a1f2e'
+            'sky-atmosphere-sun': [0.12, 78.0],
+            'sky-atmosphere-sun-intensity': 10,
+            'sky-atmosphere-color': '#475569',
+            'sky-atmosphere-halo-color': '#334155'
           }
         });
       }
@@ -171,21 +172,21 @@ const NeighborhoodEconomyMap = () => {
         ) : (
           <>
             <p className="text-gray-500 px-3 py-2 text-sm shrink-0 border-b border-gray-800/80">
-              Neighborhood indicators on a dark basemap. Pan by dragging; use the compass
-              control to tilt and rotate the view.
+              Balanced street map (readable roads & labels). Drag to pan; compass tilts and
+              rotates.
             </p>
 
             {/* Fixed height so WebGL canvas always gets pixels (flex alone often collapsed to 0). */}
-            <div className="economy-map-panel relative w-full h-[288px] shrink-0 rounded-b-md overflow-hidden ring-1 ring-gray-700/60 bg-[#111827]">
+            <div className="economy-map-panel relative w-full h-[288px] shrink-0 rounded-b-md overflow-hidden ring-1 ring-gray-600/50 bg-[#1e293b]">
               <MapGL
                 mapStyle={BASE_MAP_STYLE}
                 onLoad={onMapLoad}
                 initialViewState={{
                   longitude: montgomeryCenter.lng,
                   latitude: montgomeryCenter.lat,
-                  zoom: 11.7,
-                  pitch: 52,
-                  bearing: -26
+                  zoom: 11.9,
+                  pitch: 50,
+                  bearing: -24
                 }}
                 maxPitch={85}
                 minPitch={0}
