@@ -4,22 +4,24 @@ import MapGL, { Marker, Popup, NavigationControl } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { apiUrl } from '../lib/api';
 
-/** Oblique “3D” basemap: terrain mesh + pitch + sky (MapLibre). */
-const MAP_STYLE = {
+/**
+ * Basemap only (reliable). Terrain is added in onLoad when the DEM source responds.
+ * OSM.org tiles often block or throttle non-browser clients; CARTO CDN works more consistently.
+ */
+const BASE_MAP_STYLE = {
   version: 8,
-  name: 'economy-3d',
+  name: 'economy-base',
   sources: {
-    osm: {
+    carto: {
       type: 'raster',
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tiles: [
+        'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+        'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+        'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+      ],
       tileSize: 256,
       attribution:
-        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    },
-    terrain: {
-      type: 'raster-dem',
-      url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
-      tileSize: 256
+        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © CARTO'
     }
   },
   layers: [
@@ -29,27 +31,16 @@ const MAP_STYLE = {
       paint: { 'background-color': '#0a0f1e' }
     },
     {
-      id: 'osm',
+      id: 'basemap',
       type: 'raster',
-      source: 'osm',
+      source: 'carto',
       paint: {
-        'raster-saturation': -0.2,
-        'raster-brightness-min': 0.12,
-        'raster-brightness-max': 0.88
-      }
-    },
-    {
-      id: 'sky',
-      type: 'sky',
-      paint: {
-        'sky-type': 'atmosphere',
-        'sky-atmosphere-sun': [0.0, 75.0],
-        'sky-atmosphere-sun-intensity': 11,
-        'sky-atmosphere-color': '#1e293b'
+        'raster-saturation': -0.15,
+        'raster-brightness-min': 0.08,
+        'raster-brightness-max': 0.92
       }
     }
-  ],
-  terrain: { source: 'terrain', exaggeration: 1.2 }
+  ]
 };
 
 const NeighborhoodEconomyMap = () => {
@@ -123,9 +114,36 @@ const NeighborhoodEconomyMap = () => {
   const activePopup =
     popupIndex !== null ? markers.find((m) => m.index === popupIndex) : null;
 
+  const onMapLoad = useCallback((e) => {
+    const map = e.target;
+    try {
+      if (map.getSource('terrain-dem')) return;
+      map.addSource('terrain-dem', {
+        type: 'raster-dem',
+        url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
+        tileSize: 256
+      });
+      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.15 });
+      if (!map.getLayer('sky')) {
+        map.addLayer({
+          id: 'sky',
+          type: 'sky',
+          paint: {
+            'sky-type': 'atmosphere',
+            'sky-atmosphere-sun': [0.0, 75.0],
+            'sky-atmosphere-sun-intensity': 10,
+            'sky-atmosphere-color': '#1e293b'
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Economy map: 3D terrain unavailable, using tilted 2D.', err);
+    }
+  }, []);
+
   return (
     <div className="bg-mgm-card rounded-xl p-6 shadow-lg border border-gray-800 flex flex-col h-96">
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex justify-between items-center mb-4 shrink-0">
         <h2 className="text-xl font-semibold text-mgm-blue flex items-center gap-2">
           <Map className="w-6 h-6" />
           Economy Map
@@ -145,33 +163,34 @@ const NeighborhoodEconomyMap = () => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden flex flex-col relative w-full rounded-lg border border-gray-800 bg-mgm-navy min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 rounded-lg border border-gray-800 bg-mgm-navy overflow-hidden">
         {error ? (
           <p className="text-red-400 text-sm p-4">Error: {error}</p>
         ) : (
           <>
-            <p className="text-gray-500 px-4 pt-3 pb-1 text-sm shrink-0">
-              3D terrain view of Montgomery — unemployment, income, and poverty by area.
+            <p className="text-gray-500 px-3 py-2 text-sm shrink-0 border-b border-gray-800/80">
+              Tilted map of Montgomery (3D terrain when available). Drag to rotate; use
+              compass to reset north.
             </p>
 
-            <div className="flex-1 w-full min-h-[200px] relative rounded-b-lg overflow-hidden">
+            {/* Fixed height so WebGL canvas always gets pixels (flex alone often collapsed to 0). */}
+            <div className="relative w-full h-[252px] shrink-0 bg-mgm-navy">
               <MapGL
-                mapStyle={MAP_STYLE}
+                mapStyle={BASE_MAP_STYLE}
+                onLoad={onMapLoad}
                 initialViewState={{
                   longitude: montgomeryCenter.lng,
                   latitude: montgomeryCenter.lat,
                   zoom: 11.4,
-                  pitch: 50,
-                  bearing: -25,
-                  padding: { top: 8, bottom: 8, left: 8, right: 8 }
+                  pitch: 48,
+                  bearing: -28
                 }}
                 maxPitch={85}
                 minPitch={0}
                 dragRotate
                 touchPitch
                 style={{ width: '100%', height: '100%' }}
-                attributionControl
-                reuseMaps
+                attributionControl={{ compact: true }}
               >
                 <NavigationControl position="top-left" showCompass showZoom />
                 {!loading &&
@@ -222,9 +241,17 @@ const NeighborhoodEconomyMap = () => {
               </MapGL>
 
               {loading && (
-                <div className="absolute inset-0 bg-mgm-navy/80 flex items-center justify-center z-10 pointer-events-none">
+                <div className="absolute inset-0 bg-mgm-navy/70 flex items-center justify-center z-10 pointer-events-none">
                   <p className="text-gray-400 text-sm font-mono tracking-widest">
-                    [ LOADING MAP... ]
+                    [ LOADING DATA... ]
+                  </p>
+                </div>
+              )}
+
+              {!loading && markers.length === 0 && (
+                <div className="absolute bottom-2 left-2 right-2 rounded-md bg-mgm-navy/90 border border-gray-700 px-2 py-1.5 text-center pointer-events-none z-[5]">
+                  <p className="text-xs text-gray-400">
+                    No neighborhood rows from the server yet — map still shows Montgomery.
                   </p>
                 </div>
               )}
