@@ -5,19 +5,20 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { apiUrl } from '../lib/api';
 
 /**
- * Basemap only (reliable). Terrain is added in onLoad when the DEM source responds.
- * OSM.org tiles often block or throttle non-browser clients; CARTO CDN works more consistently.
+ * Voyager basemap: roads, water, and labels read clearly vs. dark_all mush.
+ * Slight dimming keeps it cohesive inside the dark dashboard card.
+ * Terrain is added in onLoad.
  */
 const BASE_MAP_STYLE = {
   version: 8,
-  name: 'economy-base',
+  name: 'economy-voyager',
   sources: {
     carto: {
       type: 'raster',
       tiles: [
-        'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+        'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+        'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+        'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png'
       ],
       tileSize: 256,
       attribution:
@@ -28,16 +29,17 @@ const BASE_MAP_STYLE = {
     {
       id: 'background',
       type: 'background',
-      paint: { 'background-color': '#0a0f1e' }
+      paint: { 'background-color': '#1a2332' }
     },
     {
       id: 'basemap',
       type: 'raster',
       source: 'carto',
       paint: {
-        'raster-saturation': -0.15,
-        'raster-brightness-min': 0.08,
-        'raster-brightness-max': 0.92
+        'raster-saturation': 0.12,
+        'raster-contrast': 0.08,
+        'raster-brightness-min': 0.22,
+        'raster-brightness-max': 0.98
       }
     }
   ]
@@ -123,16 +125,17 @@ const NeighborhoodEconomyMap = () => {
         url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
         tileSize: 256
       });
-      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.15 });
+      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.45 });
       if (!map.getLayer('sky')) {
         map.addLayer({
           id: 'sky',
           type: 'sky',
           paint: {
             'sky-type': 'atmosphere',
-            'sky-atmosphere-sun': [0.0, 75.0],
-            'sky-atmosphere-sun-intensity': 10,
-            'sky-atmosphere-color': '#1e293b'
+            'sky-atmosphere-sun': [0.15, 85.0],
+            'sky-atmosphere-sun-intensity': 14,
+            'sky-atmosphere-color': '#4a5568',
+            'sky-atmosphere-halo-color': '#2d3748'
           }
         });
       }
@@ -142,7 +145,7 @@ const NeighborhoodEconomyMap = () => {
   }, []);
 
   return (
-    <div className="bg-mgm-card rounded-xl p-6 shadow-lg border border-gray-800 flex flex-col h-96">
+    <div className="bg-mgm-card rounded-xl p-6 shadow-lg border border-gray-800 flex flex-col min-h-96 h-auto">
       <div className="flex justify-between items-center mb-4 shrink-0">
         <h2 className="text-xl font-semibold text-mgm-blue flex items-center gap-2">
           <Map className="w-6 h-6" />
@@ -169,21 +172,21 @@ const NeighborhoodEconomyMap = () => {
         ) : (
           <>
             <p className="text-gray-500 px-3 py-2 text-sm shrink-0 border-b border-gray-800/80">
-              Tilted map of Montgomery (3D terrain when available). Drag to rotate; use
-              compass to reset north.
+              Voyager basemap for clear streets; tilt and drag for 3D terrain view. Compass
+              resets north.
             </p>
 
             {/* Fixed height so WebGL canvas always gets pixels (flex alone often collapsed to 0). */}
-            <div className="relative w-full h-[252px] shrink-0 bg-mgm-navy">
+            <div className="relative w-full h-[288px] shrink-0 rounded-b-md overflow-hidden ring-1 ring-white/10 bg-[#1a2332]">
               <MapGL
                 mapStyle={BASE_MAP_STYLE}
                 onLoad={onMapLoad}
                 initialViewState={{
                   longitude: montgomeryCenter.lng,
                   latitude: montgomeryCenter.lat,
-                  zoom: 11.4,
-                  pitch: 48,
-                  bearing: -28
+                  zoom: 12,
+                  pitch: 56,
+                  bearing: -32
                 }}
                 maxPitch={85}
                 minPitch={0}
@@ -208,7 +211,7 @@ const NeighborhoodEconomyMap = () => {
                           e.stopPropagation();
                           setPopupIndex((cur) => (cur === n.index ? null : n.index));
                         }}
-                        className="block w-4 h-4 rounded-full bg-mgm-blue border-2 border-white shadow-lg hover:scale-110 transition-transform cursor-pointer"
+                        className="block w-[18px] h-[18px] rounded-full bg-mgm-blue border-[3px] border-white shadow-[0_0_12px_rgba(59,130,246,0.7)] hover:scale-110 transition-transform cursor-pointer"
                       />
                     </Marker>
                   ))}
