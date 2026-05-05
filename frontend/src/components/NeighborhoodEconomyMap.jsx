@@ -5,20 +5,19 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { apiUrl } from '../lib/api';
 
 /**
- * Voyager basemap: roads, water, and labels read clearly vs. dark_all mush.
- * Slight dimming keeps it cohesive inside the dark dashboard card.
- * Terrain is added in onLoad.
+ * CARTO dark basemap aligned with mgm-card; raster grading keeps streets readable.
+ * Terrain + sky added in onLoad.
  */
 const BASE_MAP_STYLE = {
   version: 8,
-  name: 'economy-voyager',
+  name: 'economy-dark-pro',
   sources: {
     carto: {
       type: 'raster',
       tiles: [
-        'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-        'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-        'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png'
+        'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+        'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+        'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
       ],
       tileSize: 256,
       attribution:
@@ -29,17 +28,17 @@ const BASE_MAP_STYLE = {
     {
       id: 'background',
       type: 'background',
-      paint: { 'background-color': '#1a2332' }
+      paint: { 'background-color': '#111827' }
     },
     {
       id: 'basemap',
       type: 'raster',
       source: 'carto',
       paint: {
-        'raster-saturation': 0.12,
-        'raster-contrast': 0.08,
-        'raster-brightness-min': 0.22,
-        'raster-brightness-max': 0.98
+        'raster-saturation': 0.18,
+        'raster-contrast': 0.2,
+        'raster-brightness-min': 0.14,
+        'raster-brightness-max': 0.78
       }
     }
   ]
@@ -125,17 +124,17 @@ const NeighborhoodEconomyMap = () => {
         url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
         tileSize: 256
       });
-      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.45 });
+      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.22 });
       if (!map.getLayer('sky')) {
         map.addLayer({
           id: 'sky',
           type: 'sky',
           paint: {
             'sky-type': 'atmosphere',
-            'sky-atmosphere-sun': [0.15, 85.0],
-            'sky-atmosphere-sun-intensity': 14,
-            'sky-atmosphere-color': '#4a5568',
-            'sky-atmosphere-halo-color': '#2d3748'
+            'sky-atmosphere-sun': [0.08, 72.0],
+            'sky-atmosphere-sun-intensity': 9,
+            'sky-atmosphere-color': '#2d3548',
+            'sky-atmosphere-halo-color': '#1a1f2e'
           }
         });
       }
@@ -172,21 +171,21 @@ const NeighborhoodEconomyMap = () => {
         ) : (
           <>
             <p className="text-gray-500 px-3 py-2 text-sm shrink-0 border-b border-gray-800/80">
-              Voyager basemap for clear streets; tilt and drag for 3D terrain view. Compass
-              resets north.
+              Neighborhood indicators on a dark basemap. Pan by dragging; use the compass
+              control to tilt and rotate the view.
             </p>
 
             {/* Fixed height so WebGL canvas always gets pixels (flex alone often collapsed to 0). */}
-            <div className="relative w-full h-[288px] shrink-0 rounded-b-md overflow-hidden ring-1 ring-white/10 bg-[#1a2332]">
+            <div className="economy-map-panel relative w-full h-[288px] shrink-0 rounded-b-md overflow-hidden ring-1 ring-gray-700/60 bg-[#111827]">
               <MapGL
                 mapStyle={BASE_MAP_STYLE}
                 onLoad={onMapLoad}
                 initialViewState={{
                   longitude: montgomeryCenter.lng,
                   latitude: montgomeryCenter.lat,
-                  zoom: 12,
-                  pitch: 56,
-                  bearing: -32
+                  zoom: 11.7,
+                  pitch: 52,
+                  bearing: -26
                 }}
                 maxPitch={85}
                 minPitch={0}
@@ -226,17 +225,19 @@ const NeighborhoodEconomyMap = () => {
                     closeOnClick={false}
                     maxWidth="280px"
                   >
-                    <div className="text-sm text-gray-800 min-w-[200px]">
-                      <p className="font-bold text-mgm-blue mb-1">{activePopup.name}</p>
-                      <p className="text-xs">
-                        <strong>Unemployment:</strong> {activePopup.unemployment}%
+                    <div className="text-sm text-gray-200 min-w-[200px]">
+                      <p className="font-semibold text-mgm-cyan mb-1.5">{activePopup.name}</p>
+                      <p className="text-xs text-gray-400">
+                        <span className="text-gray-300">Unemployment</span>{' '}
+                        {activePopup.unemployment}%
                       </p>
-                      <p className="text-xs">
-                        <strong>Avg Income:</strong> $
+                      <p className="text-xs text-gray-400">
+                        <span className="text-gray-300">Avg income</span> $
                         {(activePopup.avgIncome / 1000).toFixed(0)}k
                       </p>
-                      <p className="text-xs">
-                        <strong>Poverty Rate:</strong> {activePopup.povertyRate}%
+                      <p className="text-xs text-gray-400">
+                        <span className="text-gray-300">Poverty rate</span>{' '}
+                        {activePopup.povertyRate}%
                       </p>
                     </div>
                   </Popup>
