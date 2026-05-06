@@ -141,6 +141,29 @@ const NeighborhoodEconomyMap = () => {
   const onMapLoad = useCallback((e) => {
     const map = e.target;
     try {
+      // Restyle the default vector layers to a light monochrome look.
+      const styleLayers = map.getStyle()?.layers || [];
+      for (const layer of styleLayers) {
+        if (!layer?.id || !layer?.type) continue;
+        try {
+          if (layer.type === 'background') {
+            map.setPaintProperty(layer.id, 'background-color', '#eceff3');
+          } else if (layer.type === 'fill') {
+            map.setPaintProperty(layer.id, 'fill-color', '#d8dce3');
+            map.setPaintProperty(layer.id, 'fill-opacity', 0.95);
+          } else if (layer.type === 'line') {
+            map.setPaintProperty(layer.id, 'line-color', '#f7f8fb');
+            map.setPaintProperty(layer.id, 'line-opacity', 0.7);
+          } else if (layer.type === 'symbol') {
+            map.setPaintProperty(layer.id, 'text-color', '#6b7280');
+            map.setPaintProperty(layer.id, 'text-halo-color', '#f8fafc');
+            map.setPaintProperty(layer.id, 'text-halo-width', 1);
+          }
+        } catch {
+          // Some layers do not expose every paint property for runtime edits.
+        }
+      }
+
       if (!map.getLayer('economy-3d-buildings')) {
         map.addLayer({
           id: 'economy-3d-buildings',
@@ -150,25 +173,25 @@ const NeighborhoodEconomyMap = () => {
           type: 'fill-extrusion',
           minzoom: 14,
           paint: {
-            'fill-extrusion-color': '#d6d0c5',
+            'fill-extrusion-color': '#ece8df',
             'fill-extrusion-height': ['get', 'height'],
             'fill-extrusion-base': ['get', 'min_height'],
-            'fill-extrusion-opacity': 0.93
+            'fill-extrusion-opacity': 0.98
           }
         });
       }
 
       map.setLight({
         anchor: 'viewport',
-        color: '#fff6e5',
-        intensity: 0.45,
-        position: [1.5, 160, 70]
+        color: '#ffffff',
+        intensity: 0.62,
+        position: [1.15, 178, 62]
       });
 
       map.setFog({
-        color: '#f3efe6',
-        'high-color': '#e2ddd1',
-        'horizon-blend': 0.1
+        color: '#edf1f7',
+        'high-color': '#e7ebf2',
+        'horizon-blend': 0.04
       });
 
       if (map.getSource('terrain-dem')) return;
@@ -224,8 +247,7 @@ const NeighborhoodEconomyMap = () => {
         ) : (
           <>
             <p className="text-gray-500 px-3 py-2 text-sm shrink-0 border-b border-gray-800/80">
-              3D city map style with clean buildings and labels. Pan, zoom, and rotate for the
-              same perspective look.
+              Light 3D city style with clean structure. Pan, zoom, and rotate for perspective.
             </p>
 
             <div className="economy-map-panel relative w-full h-[288px] shrink-0 rounded-b-md overflow-hidden ring-1 ring-gray-600/50 bg-[#1e293b]">
