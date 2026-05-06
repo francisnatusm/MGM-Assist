@@ -1,49 +1,69 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Map, RefreshCw } from 'lucide-react';
-import MapGL, { Marker, Popup, NavigationControl } from 'react-map-gl/maplibre';
+import MapGL, {
+  Marker,
+  Popup,
+  NavigationControl,
+  Source,
+  Layer
+} from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { apiUrl } from '../lib/api';
 
-/**
- * Voyager = clear streets, water, labels. Raster grading pulls it to a mid “dashboard”
- * tone: not washed out, not crushed black—readable structures beside dark UI chrome.
- * Terrain + sky in onLoad.
- */
-const BASE_MAP_STYLE = {
-  version: 8,
-  name: 'economy-balanced',
-  sources: {
-    carto: {
-      type: 'raster',
-      tiles: [
-        'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-        'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-        'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png'
-      ],
-      tileSize: 256,
-      attribution:
-        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © CARTO'
-    }
-  },
-  layers: [
-    {
-      id: 'background',
-      type: 'background',
-      paint: { 'background-color': '#1e293b' }
-    },
-    {
-      id: 'basemap',
-      type: 'raster',
-      source: 'carto',
-      paint: {
-        'raster-saturation': -0.05,
-        'raster-contrast': 0.16,
-        'raster-brightness-min': 0.38,
-        'raster-brightness-max': 0.72
-      }
-    }
-  ]
+/** Rough Montgomery metro outline when no API markers yet */
+const MONTGOMERY_FALLBACK_POLYGON = {
+  type: 'Feature',
+  properties: {},
+  geometry: {
+    type: 'Polygon',
+    coordinates: [
+      [
+        [-86.48, 32.22],
+        [-86.08, 32.22],
+        [-86.08, 32.52],
+        [-86.48, 32.52],
+        [-86.48, 32.22]
+      ]
+    ]
+  }
 };
+
+function highlightGeoJSON(markers) {
+  if (!markers.length) {
+    return { type: 'FeatureCollection', features: [MONTGOMERY_FALLBACK_POLYGON] };
+  }
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (const m of markers) {
+    minLat = Math.min(minLat, m.lat);
+    maxLat = Math.max(maxLat, m.lat);
+    minLng = Math.min(minLng, m.lng);
+    maxLng = Math.max(maxLng, m.lng);
+  }
+  const pad = 0.045;
+  const feature = {
+    type: 'Feature',
+    properties: {},
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [minLng - pad, minLat - pad],
+          [maxLng + pad, minLat - pad],
+          [maxLng + pad, maxLat + pad],
+          [minLng - pad, maxLat + pad],
+          [minLng - pad, minLat - pad]
+        ]
+      ]
+    }
+  };
+  return { type: 'FeatureCollection', features: [feature] };
+}
+
+/** Public vector style that supports labels + OSM buildings (no API key). */
+const BASE_MAP_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
 
 const NeighborhoodEconomyMap = () => {
   const [data, setData] = useState({
@@ -113,34 +133,66 @@ const NeighborhoodEconomyMap = () => {
     });
   }, [data.neighborhoods, getNeighboroodCoordinates]);
 
+  const highlightData = useMemo(() => highlightGeoJSON(markers), [markers]);
+
   const activePopup =
     popupIndex !== null ? markers.find((m) => m.index === popupIndex) : null;
 
   const onMapLoad = useCallback((e) => {
     const map = e.target;
     try {
+      if (!map.getLayer('economy-3d-buildings')) {
+        map.addLayer({
+          id: 'economy-3d-buildings',
+          source: 'openmaptiles',
+          'source-layer': 'building',
+          filter: ['==', 'extrude', 'true'],
+          type: 'fill-extrusion',
+          minzoom: 14,
+          paint: {
+            'fill-extrusion-color': '#d6d0c5',
+            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-base': ['get', 'min_height'],
+            'fill-extrusion-opacity': 0.93
+          }
+        });
+      }
+
+      map.setLight({
+        anchor: 'viewport',
+        color: '#fff6e5',
+        intensity: 0.45,
+        position: [1.5, 160, 70]
+      });
+
+      map.setFog({
+        color: '#f3efe6',
+        'high-color': '#e2ddd1',
+        'horizon-blend': 0.1
+      });
+
       if (map.getSource('terrain-dem')) return;
       map.addSource('terrain-dem', {
         type: 'raster-dem',
         url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
         tileSize: 256
       });
-      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.18 });
+      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.08 });
       if (!map.getLayer('sky')) {
         map.addLayer({
           id: 'sky',
           type: 'sky',
           paint: {
             'sky-type': 'atmosphere',
-            'sky-atmosphere-sun': [0.12, 78.0],
-            'sky-atmosphere-sun-intensity': 10,
-            'sky-atmosphere-color': '#475569',
-            'sky-atmosphere-halo-color': '#334155'
+            'sky-atmosphere-sun': [0.7, 145.0],
+            'sky-atmosphere-sun-intensity': 6,
+            'sky-atmosphere-color': '#dbe3ef',
+            'sky-atmosphere-halo-color': '#f8f3e8'
           }
         });
       }
     } catch (err) {
-      console.warn('Economy map: 3D terrain unavailable, using tilted 2D.', err);
+      console.warn('Economy map: terrain/sky unavailable.', err);
     }
   }, []);
 
@@ -172,21 +224,20 @@ const NeighborhoodEconomyMap = () => {
         ) : (
           <>
             <p className="text-gray-500 px-3 py-2 text-sm shrink-0 border-b border-gray-800/80">
-              Balanced street map (readable roads & labels). Drag to pan; compass tilts and
-              rotates.
+              3D city map style with clean buildings and labels. Pan, zoom, and rotate for the
+              same perspective look.
             </p>
 
-            {/* Fixed height so WebGL canvas always gets pixels (flex alone often collapsed to 0). */}
             <div className="economy-map-panel relative w-full h-[288px] shrink-0 rounded-b-md overflow-hidden ring-1 ring-gray-600/50 bg-[#1e293b]">
               <MapGL
-                mapStyle={BASE_MAP_STYLE}
+                mapStyle={BASE_MAP_STYLE_URL}
                 onLoad={onMapLoad}
                 initialViewState={{
                   longitude: montgomeryCenter.lng,
                   latitude: montgomeryCenter.lat,
-                  zoom: 11.9,
-                  pitch: 50,
-                  bearing: -24
+                  zoom: 15.2,
+                  pitch: 63,
+                  bearing: -36
                 }}
                 maxPitch={85}
                 minPitch={0}
@@ -196,13 +247,34 @@ const NeighborhoodEconomyMap = () => {
                 attributionControl={{ compact: true }}
               >
                 <NavigationControl position="top-left" showCompass showZoom />
+
+                <Source id="economy-highlight" type="geojson" data={highlightData}>
+                  <Layer
+                    id="economy-highlight-fill"
+                    type="fill"
+                    paint={{
+                      'fill-color': '#3b82f6',
+                      'fill-opacity': 0.18
+                    }}
+                  />
+                  <Layer
+                    id="economy-highlight-line"
+                    type="line"
+                    paint={{
+                      'line-color': '#1e3a8a',
+                      'line-width': 2,
+                      'line-opacity': 0.95
+                    }}
+                  />
+                </Source>
+
                 {!loading &&
                   markers.map((n) => (
                     <Marker
                       key={n.index}
                       longitude={n.lng}
                       latitude={n.lat}
-                      anchor="bottom"
+                      anchor="center"
                     >
                       <button
                         type="button"
@@ -211,7 +283,7 @@ const NeighborhoodEconomyMap = () => {
                           e.stopPropagation();
                           setPopupIndex((cur) => (cur === n.index ? null : n.index));
                         }}
-                        className="block w-[18px] h-[18px] rounded-full bg-mgm-blue border-[3px] border-white shadow-[0_0_12px_rgba(59,130,246,0.7)] hover:scale-110 transition-transform cursor-pointer"
+                        className="block h-[22px] w-[22px] rounded-full bg-red-500 border-[3px] border-white shadow-[0_2px_14px_rgba(0,0,0,0.55)] hover:scale-110 transition-transform cursor-pointer"
                       />
                     </Marker>
                   ))}
@@ -220,7 +292,7 @@ const NeighborhoodEconomyMap = () => {
                     longitude={activePopup.lng}
                     latitude={activePopup.lat}
                     anchor="bottom"
-                    offset={18}
+                    offset={20}
                     onClose={() => setPopupIndex(null)}
                     closeButton
                     closeOnClick={false}
@@ -256,7 +328,7 @@ const NeighborhoodEconomyMap = () => {
               {!loading && markers.length === 0 && (
                 <div className="absolute bottom-2 left-2 right-2 rounded-md bg-mgm-navy/90 border border-gray-700 px-2 py-1.5 text-center pointer-events-none z-[5]">
                   <p className="text-xs text-gray-400">
-                    No neighborhood rows from the server yet — map still shows Montgomery.
+                    No neighborhood metrics yet — outline shows the Montgomery study area.
                   </p>
                 </div>
               )}
