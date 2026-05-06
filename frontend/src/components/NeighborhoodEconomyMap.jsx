@@ -62,8 +62,40 @@ function highlightGeoJSON(markers) {
   return { type: 'FeatureCollection', features: [feature] };
 }
 
-/** Public vector style that supports labels + OSM buildings (no API key). */
-const BASE_MAP_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
+/** Satellite style for Google-Earth-like dark aerial look (no key required). */
+const BASE_MAP_STYLE = {
+  version: 8,
+  name: 'economy-satellite-dark',
+  sources: {
+    satellite: {
+      type: 'raster',
+      tiles: [
+        'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+      ],
+      tileSize: 256,
+      attribution:
+        'Imagery <a href="https://www.esri.com/">© Esri</a>, Maxar, Earthstar, USDA, USGS, IGN, GIS community'
+    }
+  },
+  layers: [
+    {
+      id: 'background',
+      type: 'background',
+      paint: { 'background-color': '#0f172a' }
+    },
+    {
+      id: 'satellite-base',
+      type: 'raster',
+      source: 'satellite',
+      paint: {
+        'raster-saturation': -0.18,
+        'raster-contrast': 0.3,
+        'raster-brightness-min': 0.02,
+        'raster-brightness-max': 0.78
+      }
+    }
+  ]
+};
 
 const NeighborhoodEconomyMap = () => {
   const [data, setData] = useState({
@@ -141,57 +173,11 @@ const NeighborhoodEconomyMap = () => {
   const onMapLoad = useCallback((e) => {
     const map = e.target;
     try {
-      // Restyle the default vector layers to a light monochrome look.
-      const styleLayers = map.getStyle()?.layers || [];
-      for (const layer of styleLayers) {
-        if (!layer?.id || !layer?.type) continue;
-        try {
-          if (layer.type === 'background') {
-            map.setPaintProperty(layer.id, 'background-color', '#eceff3');
-          } else if (layer.type === 'fill') {
-            map.setPaintProperty(layer.id, 'fill-color', '#d8dce3');
-            map.setPaintProperty(layer.id, 'fill-opacity', 0.95);
-          } else if (layer.type === 'line') {
-            map.setPaintProperty(layer.id, 'line-color', '#f7f8fb');
-            map.setPaintProperty(layer.id, 'line-opacity', 0.7);
-          } else if (layer.type === 'symbol') {
-            map.setPaintProperty(layer.id, 'text-color', '#6b7280');
-            map.setPaintProperty(layer.id, 'text-halo-color', '#f8fafc');
-            map.setPaintProperty(layer.id, 'text-halo-width', 1);
-          }
-        } catch {
-          // Some layers do not expose every paint property for runtime edits.
-        }
-      }
-
-      if (!map.getLayer('economy-3d-buildings')) {
-        map.addLayer({
-          id: 'economy-3d-buildings',
-          source: 'openmaptiles',
-          'source-layer': 'building',
-          filter: ['==', 'extrude', 'true'],
-          type: 'fill-extrusion',
-          minzoom: 14,
-          paint: {
-            'fill-extrusion-color': '#ece8df',
-            'fill-extrusion-height': ['get', 'height'],
-            'fill-extrusion-base': ['get', 'min_height'],
-            'fill-extrusion-opacity': 0.98
-          }
-        });
-      }
-
-      map.setLight({
-        anchor: 'viewport',
-        color: '#ffffff',
-        intensity: 0.62,
-        position: [1.15, 178, 62]
-      });
-
       map.setFog({
-        color: '#edf1f7',
-        'high-color': '#e7ebf2',
-        'horizon-blend': 0.04
+        color: '#101827',
+        'high-color': '#1e293b',
+        'horizon-blend': 0.08,
+        range: [0.8, 8]
       });
 
       if (map.getSource('terrain-dem')) return;
@@ -207,10 +193,10 @@ const NeighborhoodEconomyMap = () => {
           type: 'sky',
           paint: {
             'sky-type': 'atmosphere',
-            'sky-atmosphere-sun': [0.7, 145.0],
-            'sky-atmosphere-sun-intensity': 6,
-            'sky-atmosphere-color': '#dbe3ef',
-            'sky-atmosphere-halo-color': '#f8f3e8'
+            'sky-atmosphere-sun': [0.25, 110.0],
+            'sky-atmosphere-sun-intensity': 8,
+            'sky-atmosphere-color': '#1f2937',
+            'sky-atmosphere-halo-color': '#111827'
           }
         });
       }
@@ -247,19 +233,19 @@ const NeighborhoodEconomyMap = () => {
         ) : (
           <>
             <p className="text-gray-500 px-3 py-2 text-sm shrink-0 border-b border-gray-800/80">
-              Light 3D city style with clean structure. Pan, zoom, and rotate for perspective.
+              Dark aerial style with terrain tilt, similar to Earth-like map perspective.
             </p>
 
             <div className="economy-map-panel relative w-full h-[288px] shrink-0 rounded-b-md overflow-hidden ring-1 ring-gray-600/50 bg-[#1e293b]">
               <MapGL
-                mapStyle={BASE_MAP_STYLE_URL}
+                mapStyle={BASE_MAP_STYLE}
                 onLoad={onMapLoad}
                 initialViewState={{
                   longitude: montgomeryCenter.lng,
                   latitude: montgomeryCenter.lat,
-                  zoom: 15.2,
-                  pitch: 63,
-                  bearing: -36
+                  zoom: 12.4,
+                  pitch: 57,
+                  bearing: -20
                 }}
                 maxPitch={85}
                 minPitch={0}
