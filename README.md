@@ -114,7 +114,7 @@ The system automatically scrapes, processes, and displays data daily, ensuring u
    
    Create `.env` in the root directory:
    ```env
-   ANTHROPIC_API_KEY=sk-ant-api03-... # Optional (fallback works without)
+   ANTHROPIC_API_KEY=sk-ant-api03-... # (fallback works without)
    BRIGHTDATA_API_TOKEN=your_bright_data_token
    FIREBASE_SERVICE_ACCOUNT_KEY_PATH=./firebase-service-account.json
    ```
