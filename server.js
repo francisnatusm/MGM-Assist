@@ -7,6 +7,17 @@ const admin = require('firebase-admin');
 require('dotenv').config();
 require('dotenv').config({ path: path.join(__dirname, '.env.local'), override: true });
 
+/** Parse Firebase service account JSON from env (handles Vercel one-line secrets with \\n). */
+function parseServiceAccountJson(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return JSON.parse(trimmed.replace(/\\n/g, '\n'));
+  }
+}
+
 // Initialize Firebase Admin
 try {
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
@@ -14,7 +25,7 @@ try {
 
   if (serviceAccountJson || serviceAccountPath) {
     const serviceAccount = serviceAccountJson
-      ? JSON.parse(serviceAccountJson)
+      ? parseServiceAccountJson(serviceAccountJson)
       : require(serviceAccountPath);
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount)
@@ -808,12 +819,6 @@ const cronRefreshHandler = (name, fn) => async (req, res) => {
   }
 };
 
-app.get('/api/cron/refresh/careers', verifyVercelCron, cronRefreshHandler('careers', runJobsCron));
-app.get('/api/cron/refresh/business', verifyVercelCron, cronRefreshHandler('business', runBusinessCron));
-app.get('/api/cron/refresh/economy', verifyVercelCron, cronRefreshHandler('economy', runEconomyCron));
-app.get('/api/cron/refresh/opportunities', verifyVercelCron, cronRefreshHandler('opportunities', runOpportunityCron));
-app.get('/api/cron/refresh/pulse', verifyVercelCron, cronRefreshHandler('pulse', runMontgomeryPulseCron));
-
 // Debug endpoint for Montgomery Pulse with detailed logging
 app.get('/api/debug/pulse-scrape', async (req, res) => {
   const logs = [];
@@ -1589,6 +1594,13 @@ const runMontgomeryPulseCron = async () => {
     console.error('❌ Montgomery Pulse cron failed:', error.message);
   }
 };
+
+// Register after cron functions are defined (avoid TDZ crash on serverless cold start).
+app.get('/api/cron/refresh/careers', verifyVercelCron, cronRefreshHandler('careers', runJobsCron));
+app.get('/api/cron/refresh/business', verifyVercelCron, cronRefreshHandler('business', runBusinessCron));
+app.get('/api/cron/refresh/economy', verifyVercelCron, cronRefreshHandler('economy', runEconomyCron));
+app.get('/api/cron/refresh/opportunities', verifyVercelCron, cronRefreshHandler('opportunities', runOpportunityCron));
+app.get('/api/cron/refresh/pulse', verifyVercelCron, cronRefreshHandler('pulse', runMontgomeryPulseCron));
 
 if (process.env.VERCEL !== '1') {
   cron.schedule('0 */6 * * *', runJobsCron);
