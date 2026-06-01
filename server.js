@@ -507,6 +507,26 @@ app.get('/api/mcp-status', async (req, res) => {
   });
 });
 
+/** Quick check for deploy + Firebase (open /api/health in browser). */
+app.get('/api/health', async (req, res) => {
+  let firestoreOk = false;
+  try {
+    const db = getFirestore();
+    if (db) {
+      await db.collection('dashboards').doc('capitalCityCareers').get();
+      firestoreOk = true;
+    }
+  } catch {
+    firestoreOk = false;
+  }
+  res.json({
+    ok: true,
+    firebaseConfigured: Boolean(admin.apps.length),
+    firestoreOk,
+    careersApiConfigured: careersEnvConfigured()
+  });
+});
+
 // Proxy endpoint for Claude API
 app.post('/api/chat', async (req, res) => {
   try {
