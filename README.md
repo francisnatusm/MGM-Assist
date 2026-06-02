@@ -102,3 +102,9 @@ VITE_API_BASE_URL=http://localhost:3003
 ## License
 
 ISC. See `LICENSE`.
+
+---
+
+<div align="center">
+  <a href="https://www.francisnatusm.com/">Francis Natus M.</a>
+</div>
