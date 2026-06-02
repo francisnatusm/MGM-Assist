@@ -362,7 +362,7 @@ For questions or support:
 - Live Demo: [gm-assist-946m.vercel.app](https://mgm-assist-946m.vercel.app/)
   
         
-                        [Francis Natus M.](https://www.francisnatusm.com/)
+[Francis Natus M.](https://www.francisnatusm.com/)
 
 
 ---
