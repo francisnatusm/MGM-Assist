@@ -3,7 +3,7 @@
   "installCommand": "npm install --include=dev && cd .. && npm install",
   "builds": [
     {
-      "src": "server-entry.js",
+      "src": "server-entry.cjs",
       "use": "@vercel/node"
     },
     {
@@ -17,7 +17,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "/server-entry.js"
+      "destination": "/server-entry.cjs"
     },
     {
       "source": "/(.*)",
