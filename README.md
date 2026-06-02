@@ -359,7 +359,8 @@ Contributions welcome! Please:
 ## 📧 Contact
 
 For questions or support:
-- GitHub Issues: [MGM-Assist/issues](https://github.com/francisnatusm/MGM-Assist/issues)
 - Live Demo: [gm-assist-946m.vercel.app](https://mgm-assist-946m.vercel.app/)
+  
+[Francis Natus M.](https://www.francisnatusm.com/)
 
 ---
