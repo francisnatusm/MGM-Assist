@@ -238,6 +238,7 @@ const customMcpClient = new CustomMCPClient(MCP_SERVER_URL);
 
 let MCP_TOOLS = [];
 let ACTIVE_MCP_SOURCE = 'none';
+const IS_VERCEL = process.env.VERCEL === '1';
 
 function toAnthropicToolList(rawTools = []) {
   return rawTools.map((tool) => {
@@ -267,6 +268,14 @@ async function connectCustomTools() {
 }
 
 async function failoverToCustom(reason) {
+  // Local custom MCP uses localhost:3001, which is unavailable in Vercel serverless.
+  if (IS_VERCEL) {
+    console.warn(`⚠️ Bright Data MCP unavailable (${reason}). Skipping localhost fallback on Vercel.`);
+    MCP_TOOLS = [];
+    ACTIVE_MCP_SOURCE = 'none';
+    return false;
+  }
+
   console.warn(`⚠️ Bright Data MCP unavailable (${reason}). Falling back to local custom MCP tools...`);
   const fallback = await connectCustomTools();
   if (!fallback.ok) {
@@ -301,6 +310,12 @@ async function initializeMCPTools() {
       return;
     }
 
+    if (IS_VERCEL) {
+      console.warn('⚠️ BRIGHTDATA_API_TOKEN missing on Vercel; MCP tools disabled.');
+      MCP_TOOLS = [];
+      ACTIVE_MCP_SOURCE = 'none';
+      return;
+    }
     console.warn('⚠️ BRIGHTDATA_API_TOKEN missing; using local custom MCP server only.');
     await failoverToCustom('token not configured');
   } catch (error) {
@@ -343,6 +358,13 @@ Primary phone for complex issues: 334-625-4636
 
 async function executeMcpTool(toolName, toolInput) {
   try {
+    if (ACTIVE_MCP_SOURCE === 'none') {
+      return {
+        ok: false,
+        result: { error: 'MCP tools unavailable on this runtime' }
+      };
+    }
+
     let result;
 
     if (ACTIVE_MCP_SOURCE === 'brightdata') {
@@ -367,6 +389,39 @@ async function executeMcpTool(toolName, toolInput) {
       result: { error: error.message }
     };
   }
+}
+
+/**
+ * Try hard to extract and parse a JSON array from model output.
+ * Handles fenced ```json blocks and raw mixed prose + JSON responses.
+ */
+function parseClaudeJsonArray(message) {
+  const text = String(message || '').trim();
+  if (!text) throw new Error('Empty model response');
+
+  // 1) Direct parse if response is a clean JSON array.
+  try {
+    const direct = JSON.parse(text);
+    if (Array.isArray(direct)) return direct;
+  } catch {}
+
+  // 2) Parse fenced ```json ... ``` blocks.
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    try {
+      const parsed = JSON.parse(fenced[1].trim());
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+
+  // 3) Parse first bracketed array in mixed text (non-greedy).
+  const arrayMatch = text.match(/\[[\s\S]*?\]/);
+  if (arrayMatch?.[0]) {
+    const parsed = JSON.parse(arrayMatch[0]);
+    if (Array.isArray(parsed)) return parsed;
+  }
+
+  throw new Error('No parsable JSON array found');
 }
 
 async function runConversationWithTools(model, userMessage) {
@@ -1551,16 +1606,10 @@ const runMontgomeryPulseCron = async () => {
     } else {
       console.log(`  ✅ Claude responded`);
       try {
-        // Try to parse Claude's response as JSON
-        const jsonMatch = claudeResult.message.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-          console.error(`  ❌ No JSON array found in Claude response. Raw first 200 chars:`, claudeResult.message.substring(0, 200));
-          pulseItems = buildFallbackItems();
-        } else {
-          pulseItems = JSON.parse(jsonMatch[0]);
-          console.log(`  ✅ Parsed ${pulseItems.length} items from Claude`);
-        }
+        pulseItems = parseClaudeJsonArray(claudeResult.message);
+        console.log(`  ✅ Parsed ${pulseItems.length} items from Claude`);
       } catch (e) {
+        console.error(`  ❌ ${e.message}. Raw first 200 chars:`, String(claudeResult.message || '').substring(0, 200));
         console.error(`  ❌ Failed to parse Claude JSON: ${e.message}`);
         pulseItems = buildFallbackItems();
       }
