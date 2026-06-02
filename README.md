@@ -1,368 +1,104 @@
-# MGM Assist 🏛️
+# MGM Assist
 
-**Montgomery Government & Management Assistant** - A real-time civic intelligence dashboard for Montgomery, Alabama, powered by AI and automated web scraping.
+MGM Assist (Montgomery Government and Management Assistant) is a civic intelligence dashboard for Montgomery, Alabama. It combines structured dashboards, AI-assisted summarization, and automated web data collection to provide residents and stakeholders with updated local insights.
 
-[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://mgm-assist.vercel.app)
-[![GitHub](https://img.shields.io/badge/github-repo-blue)](https://github.com/francisnatusm/MGM-Assist)
-[![License](https://img.shields.io/badge/license-ISC-green)](LICENSE)
+[Live Demo](https://mgm-assist-946m.vercel.app/) • [Repository](https://github.com/francisnatusm/MGM-Assist)
 
-## 📋 Overview
+## What It Does
 
-MGM Assist is an intelligent civic engagement platform that provides Montgomery, Alabama residents and stakeholders with real-time insights into:
+- Aggregates civic updates into the `Montgomery Pulse` feed.
+- Shows business, careers, and economy dashboard cards from Firestore-backed data.
+- Renders an interactive economy map with 3D-tilted map visualization.
+- Supports manual and scheduled refresh pipelines for dashboard datasets.
+- Ships as a PWA-capable frontend.
 
-- **Government Updates** - Live civic news from official Montgomery.gov sources
-- **Economic Indicators** - Interactive maps showing neighborhood economic data
-- **Business Intelligence** - Trending business sectors and opportunities
-- **Career Opportunities** - Real-time job postings from Montgomery employers
+## Bright Data Usage
 
-The system automatically scrapes, processes, and displays data daily, ensuring users always have access to the latest information.
+This project uses Bright Data in two places:
 
----
+- `mcp-server-brightdata.js` for direct MCP-based web access.
+- `server.js` MCP integration flow for scraping/processing content used in dashboard refresh tasks.
 
-## ✨ Features
+Bright Data is part of the data collection pipeline that powers periodic updates.
 
-### 🗺️ **Interactive Economy Map**
-- Real-time Leaflet-powered map of Montgomery, AL
-- Neighborhood pins showing:
-  - Unemployment rates
-  - Average income levels
-  - Poverty statistics
-- Pan, zoom, and click for detailed data
-- Monthly census data updates
+## Tech Stack
 
-### 📡 **Montgomery Pulse (Live Civic Feed)**
-- Automated scraping of 5 Montgomery.gov URLs  daily
-- AI-powered content summarization (with fallback extraction)
-- Category filtering: Council, Mayor, Deadlines, Ordinances, Meetings
-- Real-time notifications on new civic updates
-- Pagination support for browsing historical updates
+- Backend: `Node.js`, `Express`, `Firebase Admin`, `Firestore`, `node-cron`
+- AI/Data tooling: `Anthropic API`, `Bright Data MCP`
+- Frontend: `React`, `Vite`, `Tailwind CSS`, `MapLibre`, `Recharts`
+- Deployment: `Vercel`
 
-### 💼 **Business Signals Dashboard**
-- Top business sectors in Montgomery
-- Growth indicators and trends
-- Economic activity tracking
-- Business opportunities identification
+## Project Structure
 
-### 🏢 **Capital City Careers**
-- Live job postings from Montgomery area
-- Industry categorization
-- Salary range information
-- Application deadline tracking
-
-### 📱 **Progressive Web App (PWA)**
-- **Install on any device** - Add to home screen from browser (no app store needed)
-- **Offline functionality** - Works without internet connection
-- **Native-like experience** - Runs like a real mobile app
-- **Auto-updates** - Always get the latest version
-- **Works on:** iOS (Safari), Android (Chrome), Desktop (Chrome/Edge)
-
----
-
-## 🛠️ Tech Stack
-
-### Backend
-- **Node.js** + **Express.js** - API server
-- **Firebase Firestore** - Real-time database
-- **Claude AI (Anthropic)** - Content processing
-- **Bright Data MCP** - Web scraping engine
-- **node-cron** - Scheduled tasks
-- **CORS** - Cross-origin resource sharing
-
-### Frontend
-- **React 19** - UI framework
-- **Vite** - Build tool & dev server
-- **TailwindCSS** - Styling
-- **Leaflet + React-Leaflet** - Interactive maps
-- **Lucide React** - Icon library
-- **Recharts** - Data visualization
-
-### Deployment
-- **Vercel** - Serverless deployment (frontend + backend)
-- **GitHub** - Version control
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Node.js 18+ installed
-- Firebase project with Firestore enabled
-- Bright Data API token (for web scraping)
-- Anthropic API key (optional, fallback works without it)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/francisnatusm/MGM-Assist.git
-   cd MGM-Assist
-   ```
-
-2. **Install backend dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Install frontend dependencies**
-   ```bash
-   cd frontend
-   npm install
-   cd ..
-   ```
-
-4. **Configure environment variables**
-   
-   Create `.env` in the root directory:
-   ```env
-   ANTHROPIC_API_KEY=sk-ant-api03-... # (fallback works without)
-   BRIGHTDATA_API_TOKEN=your_bright_data_token
-   FIREBASE_SERVICE_ACCOUNT_KEY_PATH=./firebase-service-account.json
-   ```
-
-   Create `frontend/.env`:
-   ```env
-   VITE_API_BASE_URL=http://localhost:3003
-   ```
-
-5. **Add Firebase credentials**
-   
-   Place your `firebase-service-account.json` in the root directory.
-
-6. **Start development servers**
-   ```bash
-   # Start backend (port 3003)
-   npm run dev
-   
-   # In another terminal, start frontend (port 5173)
-   cd frontend
-   npm run dev
-   ```
-
-7. **Open your browser**
-   ```
-   http://localhost:5173
-   ```
-
----
-
-## 📦 Production Deployment
-
-### Deploy to Vercel
-
-1. **Push code to GitHub**
-   ```bash
-   git add .
-   git commit -m "Initial deployment"
-   git push origin main
-   ```
-
-2. **Deploy Backend**
-   - Go to [Vercel Dashboard](https://vercel.com)
-   - Import your GitHub repository
-   - Set environment variables:
-     - `ANTHROPIC_API_KEY`
-     - `BRIGHTDATA_API_TOKEN`
-     - `FIREBASE_SERVICE_ACCOUNT_JSON` (paste entire JSON as string)
-   - Deploy
-
-3. **Deploy Frontend**
-   - Import the same repository as a new project
-   - Set root directory to `frontend`
-   - Add environment variable:
-     - `VITE_API_BASE_URL=https://your-backend.vercel.app`
-   - Deploy
-
----
-
-## 📱 Mobile Installation (PWA)
-
-MGM Assist works as a **Progressive Web App** - users can install it on their phones like a native app!
-
-### Setup App Icons (Required)
-
-Before users can install, add app icons to `frontend/public/`:
-- `icon-192.png` (192x192 pixels)
-- `icon-512.png` (512x512 pixels)
-
-See [frontend/public/ICONS_SETUP.md](frontend/public/ICONS_SETUP.md) for detailed icon creation instructions.
-
-### How Users Install:
-
-**On Android (Chrome):**
-1. Visit your Vercel URL
-2. Tap menu (⋮) → "Add to Home Screen"
-3. MGM Assist icon appears on home screen ✅
-
-**On iOS (Safari):**
-1. Visit your Vercel URL
-2. Tap Share button → "Add to Home Screen"  
-3. MGM Assist icon appears on home screen ✅
-
-**On Desktop (Chrome/Edge):**
-1. Look for install icon (⊕) in address bar
-2. Click "Install MGM Assist"
-3. Opens as standalone app window ✅
-
-### PWA Features:
-- ✅ Works offline (cached data)
-- ✅ Full-screen experience (no browser UI)
-- ✅ Fast loading
-- ✅ Auto-updates when online
-- ✅ Home screen icon
-- ✅ Splash screen
-
----
-
-## 📂 Project Structure
-
-```
+```text
 MGM-Assist/
-├── frontend/                   # React frontend
-│   ├── src/
-│   │   ├── components/        # Dashboard components
-│   │   │   ├── MontgomeryPulse.jsx
-│   │   │   ├── NeighborhoodEconomyMap.jsx
-│   │   │   ├── BusinessSignals.jsx
-│   │   │   └── CapitalCityCareers.jsx
-│   │   ├── App.jsx            # Main app component
-│   │   └── main.jsx           # Entry point
-│   ├── package.json
-│   └── vite.config.js
-├── server.js                   # Express API server
-├── mcp-server-brightdata.js   # Bright Data MCP server
-├── firebase-service-account.json
-├── .env                        # Backend environment variables
-├── package.json
-└── README.md
+  api/                        # Vercel serverless entry
+  frontend/                   # React app
+    src/components/           # Dashboard UI components
+  scripts/                    # Utility scripts (including Vercel env sync helper)
+  server.js                   # Main API + dashboard refresh logic
+  mcp-server-brightdata.js    # Bright Data MCP server integration
+  vercel.json                 # Vercel config
 ```
 
----
+## Environment Variables
 
-## 🔌 API Endpoints
+Create a root `.env.local` (or configure equivalent variables in Vercel):
 
-### Montgomery Pulse
-- `GET /api/montgomery-pulse?page=1&category=all` - Get civic updates
-- `POST /api/dashboard/refresh/pulse` - Trigger manual refresh
+```env
+FIREBASE_SERVICE_ACCOUNT_JSON=
+FIREBASE_SERVICE_ACCOUNT_KEY_PATH=./firebase-service-account.json
 
-### Dashboards
-- `GET /api/dashboard/economy` - Neighborhood economy data
-- `GET /api/dashboard/business` - Business signals data
-- `GET /api/dashboard/careers` - Career opportunities
+USAJOBS_API_KEY=
+USAJOBS_EMAIL=
 
-### Admin
-- `POST /api/admin/clear-pulse` - Clear all Montgomery Pulse data (maintenance)
+BRIGHTDATA_API_TOKEN=
+ANTHROPIC_API_KEY=
+```
 
----
+For frontend local development (`frontend/.env`):
 
-## 🤖 Automated Tasks
+```env
+VITE_API_BASE_URL=http://localhost:3003
+```
 
-The system runs cron jobs every **6 hours** to:
+## Local Development
 
-1. **Scrape Montgomery.gov** - Fetch latest civic updates
-2. **Process Content** - Extract text and generate summaries
-3. **Update Firebase** - Save new items to Firestore
-4. **Clean Old Data** - Remove outdated entries (optional)
+1. Install backend dependencies:
+   - `npm install`
+2. Install frontend dependencies:
+   - `cd frontend && npm install`
+3. Run backend:
+   - `npm run dev`
+4. Run frontend in a second terminal:
+   - `cd frontend && npm run dev`
+5. Open:
+   - `http://localhost:5173`
 
-Cron schedule: Daily
+## Deployment (Vercel)
 
----
+1. Push `main` to GitHub.
+2. Import project in Vercel.
+3. Set required environment variables (especially `FIREBASE_SERVICE_ACCOUNT_JSON`).
+4. Deploy.
+5. Verify:
+   - `GET /api/health` should return `firebaseConfigured: true` and `firestoreOk: true`.
 
-## 🌐 Data Sources
+## Main API Endpoints
 
-Montgomery Pulse scrapes these official sources daily:
+- `GET /api/health`
+- `GET /api/dashboard/careers`
+- `GET /api/dashboard/business`
+- `GET /api/dashboard/economy`
+- `GET /api/montgomery-pulse?page=1&category=all`
+- `POST /api/dashboard/refresh/:dashboard`
 
-1. **Montgomery County Council** - `https://www.montgomerycountymd.gov/council/`
-2. **Mayor's Office** - `https://www.montgomerycountymd.gov/exec/`
-3. **Public Notices** - `https://www.montgomerycountymd.gov/open/notices.html`
-4. **City Ordinances** - `https://www.montgomerycountymd.gov/council/laws-ordinances/`
-5. **Meeting Calendar** - `https://www.montgomerycountymd.gov/calendar/`
+## Notes for Reviewers / Mentors
 
----
+- The app is focused on practical civic data delivery for Montgomery.
+- Bright Data integration is present and used as part of the scraping/MCP workflow.
+- If the UI shows "Failed to fetch ... data", check deployment env vars and `/api/health` first.
 
-## 🧩 Key Technologies Explained
+## License
 
-### **MCP (Model Context Protocol)**
-MGM Assist uses Anthropic's MCP to connect the backend to Bright Data's web scraping tools. When Claude AI needs real-time data, it calls MCP tools that fetch live web content.
-
-### **Bright Data**
-Enterprise-grade web scraping platform providing:
-- IP rotation to avoid blocks
-- CAPTCHA handling
-- Structured data extraction
-- High-speed parallel scraping
-
-### **Firebase Firestore**
-NoSQL database storing:
-- Montgomery Pulse civic updates
-- Dashboard data (economy, business, careers)
-- Real-time sync across all clients
-
-### **Leaflet Maps**
-Open-source mapping library displaying:
-- Montgomery, AL street map
-- Interactive markers for neighborhoods
-- Economic data overlays
-
----
-
-## 🐛 Troubleshooting
-
-### **Frontend shows "Failed to fetch"**
-- Check `VITE_API_BASE_URL` in `frontend/.env`
-- Ensure backend is running on port 3003
-- Verify CORS is enabled in server.js
-
-### **NaNd ago** timestamp error
-- Update to latest version (fixed in commit 85c6eb3)
-- Firestore Timestamps now converted to ISO strings
-
-### **Category filters return errors**
-- Fixed with client-side filtering (commit 70258dd)
-- No Firebase composite index required
-
-### **Map not displaying**
-- Ensure Leaflet CSS imported in `main.jsx`
-- Check browser console for errors
-- Verify internet connection (map tiles load from OpenStreetMap)
-
----
-
-## 📝 License
-
-ISC License - See [LICENSE](LICENSE) file for details.
-
----
-
-## 👥 Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 🙏 Acknowledgments
-
-- **Anthropic** - Claude AI API
-- **Bright Data** - Web scraping infrastructure
-- **Firebase** - Real-time database
-- **OpenStreetMap** - Map tiles
-- **Vercel** - Deployment platform
-- **Montgomery County, MD** - Public data sources
-
----
-
-## 📧 Contact
-
-For questions or support:
-- Live Demo: [gm-assist-946m.vercel.app](https://mgm-assist-946m.vercel.app/)
-  
-        
-- [Francis Natus M.](https://www.francisnatusm.com/)
-
-
----
+ISC. See `LICENSE`.
