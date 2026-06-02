@@ -363,7 +363,3 @@ For questions or support:
 - Live Demo: [gm-assist-946m.vercel.app](https://mgm-assist-946m.vercel.app/)
 
 ---
-
-<div align="center">
-  Made with ❤️ for Montgomery, Alabama
-</div>
