@@ -361,6 +361,8 @@ Contributions welcome! Please:
 For questions or support:
 - Live Demo: [gm-assist-946m.vercel.app](https://mgm-assist-946m.vercel.app/)
   
+<di>  
 [Francis Natus M.](https://www.francisnatusm.com/)
+</di>
 
 ---
