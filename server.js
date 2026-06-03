@@ -1183,6 +1183,19 @@ app.get('/api/dashboard/opportunities', async (req, res) => {
   }
 });
 
+// Live RSS headlines (same feed as frontend/api/pulse-rss.js on Vercel)
+app.get('/api/pulse-rss', async (req, res) => {
+  try {
+    if (MCP_TOOLS.length === 0) await initializeMCPTools();
+    const stories = await fetchPulseRssStories();
+    const items = stories.map((item) => formatPulseItemForApi(item));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, count: items.length, items, fetchedAt: new Date().toISOString() });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message, items: [] });
+  }
+});
+
 // Get Montgomery Pulse civic news feed
 app.get('/api/montgomery-pulse', async (req, res) => {
   try {

@@ -3,6 +3,10 @@
   "installCommand": "npm install --include=dev",
   "builds": [
     {
+      "src": "api/pulse-rss.js",
+      "use": "@vercel/node"
+    },
+    {
       "src": "package.json",
       "use": "@vercel/static-build",
       "config": {
@@ -11,6 +15,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/pulse-rss",
+      "destination": "/api/pulse-rss"
+    },
     {
       "source": "/api/:path*",
       "destination": "https://mgm-assist.vercel.app/api/:path*"

@@ -18,26 +18,62 @@ const MontgomeryPulse = () => {
         { id: 'meeting', label: 'Meetings', icon: '🗓️' }
     ];
 
+    const isDigestItem = (item) => / Update from Montgomery$/i.test(String(item?.title || ''));
+
+    const mergeLiveAndStored = (storedItems, liveItems) => {
+        const byKey = new Map();
+        const add = (item) => {
+            if (!item?.title || isDigestItem(item)) return;
+            const key = item.actionLink || item.source || item.title;
+            if (!byKey.has(key)) byKey.set(key, item);
+        };
+        for (const item of liveItems || []) add(item);
+        for (const item of storedItems || []) add(item);
+        return [...byKey.values()].sort(
+            (a, b) => new Date(b.publishedAt || b.date || 0) - new Date(a.publishedAt || a.date || 0)
+        );
+    };
+
+    const fetchLiveRss = async () => {
+        try {
+            const res = await fetch('/api/pulse-rss', { cache: 'no-store' });
+            if (!res.ok) return [];
+            const data = await res.json();
+            return data.items || [];
+        } catch {
+            return [];
+        }
+    };
+
     const fetchData = async (resetPage = false) => {
         try {
             setLoading(true);
             setError(null);
             const currentPage = resetPage ? 1 : page;
             const categoryParam = activeFilter !== 'all' ? `&category=${activeFilter}` : '';
-            const response = await fetch(
-                apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}&live=1`),
-                { cache: 'no-store' }
-            );
-            
-            if (!response.ok) throw new Error('Failed to fetch Montgomery Pulse data');
-            
-            const result = await response.json();
-            
+
+            const [storedRes, liveRss] = await Promise.all([
+                fetch(
+                    apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}&live=1`),
+                    { cache: 'no-store' }
+                ),
+                resetPage || currentPage === 1 ? fetchLiveRss() : Promise.resolve([])
+            ]);
+
+            if (!storedRes.ok) throw new Error('Failed to fetch Montgomery Pulse data');
+
+            const result = await storedRes.json();
+            let merged = mergeLiveAndStored(result.items || [], liveRss);
+
+            if (activeFilter !== 'all') {
+                merged = merged.filter((item) => item.category === activeFilter);
+            }
+
             if (resetPage) {
-                setItems(result.items || []);
+                setItems(merged);
                 setPage(1);
             } else {
-                setItems(prev => [...prev, ...(result.items || [])]);
+                setItems(prev => [...prev, ...(result.items || []).filter((item) => !isDigestItem(item))]);
             }
             
         } catch (err) {
@@ -113,7 +149,7 @@ const MontgomeryPulse = () => {
                 </div>
             </div>
 
-            <p className="text-xs text-gray-500 mb-3">Montgomery news — live via Bright Data + RSS, refreshed when you open this page.</p>
+            <p className="text-xs text-gray-500 mb-3">Live Montgomery headlines (RSS + city archive), refreshed every time you open this page.</p>
 
             {/* Filter buttons */}
             <div className="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-700">

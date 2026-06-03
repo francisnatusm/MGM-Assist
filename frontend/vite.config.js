@@ -11,6 +11,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      '/api/pulse-rss': {
+        target: 'http://localhost:3003',
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://localhost:3003',
         changeOrigin: true,
