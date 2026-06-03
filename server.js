@@ -424,6 +424,51 @@ function parseClaudeJsonArray(message) {
   throw new Error('No parsable JSON array found');
 }
 
+/** Best-effort publication date for a pulse story (not cron ingest time). */
+function parsePulsePublishedDate(item) {
+  const candidates = [item?.publishedAt, item?.publishedDate, item?.postedAt, item?.date].filter(Boolean);
+  const now = Date.now();
+  for (const raw of candidates) {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime()) && d.getFullYear() >= 2020 && d.getTime() <= now + 2 * 86400000) {
+      return d;
+    }
+  }
+  const url = String(item?.source || item?.actionLink || '');
+  const urlMatch = url.match(/\/(\d{4})\/(\d{1,2})\/(\d{1,2})(?:\/|$)/);
+  if (urlMatch) {
+    const d = new Date(Date.UTC(Number(urlMatch[1]), Number(urlMatch[2]) - 1, Number(urlMatch[3]), 12));
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+function resolvePulseItemPublishedAt(data) {
+  if (data?.publishedAt) {
+    const d = new Date(data.publishedAt);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  const fromItem = parsePulsePublishedDate(data);
+  if (fromItem) return fromItem.toISOString();
+  if (data?.date?.toDate) return data.date.toDate().toISOString();
+  if (typeof data?.date === 'string') return data.date;
+  return null;
+}
+
+function pulsePublishedFirestoreValue(item) {
+  const d = parsePulsePublishedDate(item);
+  if (d) {
+    return {
+      date: admin.firestore.Timestamp.fromDate(d),
+      publishedAt: d.toISOString().slice(0, 10)
+    };
+  }
+  return {
+    date: admin.firestore.FieldValue.serverTimestamp(),
+    publishedAt: null
+  };
+}
+
 async function runConversationWithTools(model, userMessage) {
   const messages = [
     {
@@ -673,8 +718,11 @@ app.get('/api/dashboard/careers', async (req, res) => {
     let doc = await ref.get();
     const raw = doc.exists ? doc.data() : {};
     const n = Array.isArray(raw.jobs) ? raw.jobs.length : 0;
+    const lastCheck = raw.lastDailyCheckAt?.toDate?.() || raw.lastUpdated?.toDate?.();
+    const hoursSinceCheck = lastCheck ? (Date.now() - lastCheck.getTime()) / 3600000 : 999;
+    const needsDailyRefresh = hoursSinceCheck >= 20;
 
-    if (n === 0 && careersEnvConfigured()) {
+    if (careersEnvConfigured() && (n === 0 || needsDailyRefresh)) {
       try {
         await runJobsCron();
       } catch (e) {
@@ -783,13 +831,16 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     
     let allItems = snapshot.docs.map(doc => {
       const data = doc.data();
+      const publishedAt = resolvePulseItemPublishedAt(data);
       return {
         id: doc.id,
         ...data,
-        // Convert Firestore Timestamp to ISO string for JSON
-        date: data.date?.toDate ? data.date.toDate().toISOString() : data.date
+        publishedAt: publishedAt ? publishedAt.slice(0, 10) : null,
+        date: publishedAt
       };
     });
+
+    allItems.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
     // Client-side filtering by category
     if (category && category !== 'all') {
@@ -799,11 +850,13 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     // Apply pagination
     const items = allItems.slice(offset, offset + limit);
 
-    // Get parsed item timestamp and fetch timestamp
-    const lastFetched = new Date().toISOString();
-    const lastUpdated = items.length > 0 ? items[0].date : null;
+    const newestStoryAt = allItems.length > 0 ? allItems[0].date : null;
 
-    res.json({ items, lastUpdated, lastFetched });
+    res.json({
+      items,
+      lastUpdated: newestStoryAt,
+      totalInFeed: allItems.length
+    });
   } catch (error) {
     console.error('Error fetching Montgomery Pulse data:', error);
     res.status(500).json({ error: error.message });
@@ -1003,7 +1056,7 @@ Content: ${JSON.stringify(allScrapedContent[0].content).slice(0, 3000)}`;
           category: item.category || 'council',
           title: item.title || 'Untitled',
           summary: item.summary || '',
-          date: admin.firestore.FieldValue.serverTimestamp(),
+          ...pulsePublishedFirestoreValue(item),
           deadline: item.deadline || null,
           actionLink: item.actionLink || null,
           actionLabel: item.actionLabel || null,
@@ -1043,7 +1096,53 @@ const getFirestore = () => {
   }
 };
 
-// 1. Capital City Careers - Fetch real job listings from free public APIs
+const CAREERS_MAX_AGE_DAYS = 90;
+const CAREERS_MAX_LISTINGS = 50;
+
+function isCareerJobActive(job, now = new Date()) {
+  if (job?.applicationCloseDate) {
+    const close = new Date(job.applicationCloseDate);
+    if (!Number.isNaN(close.getTime()) && close < now) return false;
+  }
+  const posted = job?.postedTime ? new Date(job.postedTime) : null;
+  if (posted && !Number.isNaN(posted.getTime())) {
+    const ageDays = (now.getTime() - posted.getTime()) / (1000 * 60 * 60 * 24);
+    if (ageDays > CAREERS_MAX_AGE_DAYS) return false;
+  }
+  return true;
+}
+
+function isMontgomeryAreaJob(locationText) {
+  const normalized = String(locationText || '').toLowerCase();
+  return normalized.includes('montgomery') && (normalized.includes('al') || normalized.includes('alabama'));
+}
+
+/** Merge today's API results with saved jobs; drop only closed/expired listings. */
+function mergeCareersJobs(prevJobs, freshJobs, now = new Date()) {
+  const byUrl = new Map();
+  const keyFor = (job) => job?.url || `${job?.title || ''}-${job?.company || ''}`;
+
+  for (const job of freshJobs || []) {
+    if (!isCareerJobActive(job, now)) continue;
+    byUrl.set(keyFor(job), job);
+  }
+  for (const job of prevJobs || []) {
+    if (!isCareerJobActive(job, now)) continue;
+    const key = keyFor(job);
+    if (!byUrl.has(key)) byUrl.set(key, job);
+  }
+
+  return [...byUrl.values()]
+    .sort((a, b) => {
+      const aLocal = isMontgomeryAreaJob(a.location) ? 1 : 0;
+      const bLocal = isMontgomeryAreaJob(b.location) ? 1 : 0;
+      if (aLocal !== bLocal) return bLocal - aLocal;
+      return new Date(b.postedTime || 0) - new Date(a.postedTime || 0);
+    })
+    .slice(0, CAREERS_MAX_LISTINGS);
+}
+
+// 1. Capital City Careers - Fetch real job listings from free public APIs (daily merge)
 const runJobsCron = async () => {
   console.log("🔄 Running Capital City Careers Task...");
   const db = getFirestore();
@@ -1093,8 +1192,10 @@ const runJobsCron = async () => {
         };
         const queries = [
           'LocationName=Montgomery%2C+Alabama&ResultsPerPage=50',
-          'Keyword=Montgomery&LocationName=Alabama&ResultsPerPage=50'
+          'Keyword=Montgomery&LocationName=Alabama&ResultsPerPage=50',
+          'LocationName=Alabama&ResultsPerPage=100'
         ];
+        const seenUrls = new Set();
         let items = [];
         let lastStatus = 0;
         for (const q of queries) {
@@ -1103,9 +1204,11 @@ const runJobsCron = async () => {
           if (!usajobsRes.ok) continue;
           const usajobsData = await usajobsRes.json();
           const batch = usajobsData?.SearchResult?.SearchResultItems || [];
-          if (batch.length > 0) {
-            items = batch;
-            break;
+          for (const item of batch) {
+            const url = item?.MatchedObjectDescriptor?.PositionURI;
+            if (url && seenUrls.has(url)) continue;
+            if (url) seenUrls.add(url);
+            items.push(item);
           }
         }
 
@@ -1136,6 +1239,9 @@ const runJobsCron = async () => {
               postedTime: publicationDate && !Number.isNaN(publicationDate.getTime())
                 ? publicationDate.toISOString()
                 : null,
+              applicationCloseDate: closeDate && !Number.isNaN(closeDate.getTime())
+                ? closeDate.toISOString()
+                : null,
               salary,
               url: mv.PositionURI || 'https://www.usajobs.gov',
               source: 'USAJobs'
@@ -1149,9 +1255,26 @@ const runJobsCron = async () => {
             for (const item of items) pushUsaJob(item.MatchedObjectDescriptor, { skipAge: true, skipClose: true });
           }
           const strict = allFetched.filter(j => isMontgomeryAl(j.location));
-          const toAdd = strict.length > 0
-            ? strict
-            : allFetched.map(j => ({ ...j, location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL' }));
+          const inAlabama = allFetched.filter(j => /alabama|\bal\b/i.test(String(j.location || '')));
+          let toAdd = strict;
+          if (toAdd.length < 8) {
+            const merged = [...strict];
+            const seen = new Set(strict.map(j => j.url));
+            for (const j of inAlabama) {
+              if (merged.length >= 20) break;
+              if (!seen.has(j.url)) {
+                merged.push(j);
+                seen.add(j.url);
+              }
+            }
+            toAdd = merged;
+          }
+          if (toAdd.length === 0) {
+            toAdd = allFetched.slice(0, 20).map(j => ({
+              ...j,
+              location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL'
+            }));
+          }
           allJobs.push(...toAdd);
           console.log(`✅ USAJobs: ${items.length} fetched, ${strict.length} strict Montgomery, ${toAdd.length} shown`);
           apiResults.success++;
@@ -1172,7 +1295,7 @@ const runJobsCron = async () => {
     if (hasAdzunaCreds) {
       try {
         const adzunaRes = await fetch(
-          `https://api.adzuna.com/v1/api/jobs/us/search/1?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&where=montgomery+alabama&results_per_page=25&distance=15`,
+          `https://api.adzuna.com/v1/api/jobs/us/search/1?app_id=${ADZUNA_APP_ID}&app_key=${ADZUNA_APP_KEY}&where=montgomery+alabama&results_per_page=50&distance=40`,
           { headers: { 'User-Agent': 'MGM-Assist/1.0' } }
         );
         if (adzunaRes.ok) {
@@ -1192,12 +1315,25 @@ const runJobsCron = async () => {
             });
           }
           const strictAdz = adzunaFetched.filter(j => isMontgomeryAl(j.location));
-          const toAddAdz = strictAdz.length > 0
-            ? strictAdz
-            : adzunaFetched.map(j => ({
-                ...j,
-                location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL'
-              }));
+          let toAddAdz = strictAdz;
+          if (toAddAdz.length < 8) {
+            const merged = [...strictAdz];
+            const seen = new Set(strictAdz.map(j => j.url));
+            for (const j of adzunaFetched) {
+              if (merged.length >= 20) break;
+              if (!seen.has(j.url)) {
+                merged.push(j);
+                seen.add(j.url);
+              }
+            }
+            toAddAdz = merged;
+          }
+          if (toAddAdz.length === 0) {
+            toAddAdz = adzunaFetched.slice(0, 20).map(j => ({
+              ...j,
+              location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL'
+            }));
+          }
           allJobs.push(...toAddAdz);
           console.log(`✅ Adzuna: ${results.length} fetched, ${strictAdz.length} strict, ${toAddAdz.length} added`);
           apiResults.success++;
@@ -1216,23 +1352,36 @@ const runJobsCron = async () => {
     const careersRef = db.collection('dashboards').doc('capitalCityCareers');
     const prevSnap = await careersRef.get();
     const prevData = prevSnap.exists ? prevSnap.data() : null;
-    const prevCount = Array.isArray(prevData?.jobs) ? prevData.jobs.length : 0;
+    const prevJobs = Array.isArray(prevData?.jobs) ? prevData.jobs : [];
+    const mergedJobs = mergeCareersJobs(prevJobs, allJobs, now);
+    const postedToday = mergedJobs.filter(j => {
+      const posted = j?.postedTime ? new Date(j.postedTime) : null;
+      if (!posted || Number.isNaN(posted.getTime())) return false;
+      return (now.getTime() - posted.getTime()) / 86400000 < 1;
+    }).length;
 
-    if (allJobs.length > 0) {
+    if (mergedJobs.length > 0) {
       const jobsData = {
-        jobs: allJobs.slice(0, 50),
-        totalCount: allJobs.length,
-        topIndustry: getTopIndustry(allJobs),
+        jobs: mergedJobs,
+        totalCount: mergedJobs.length,
+        newToday: postedToday,
+        topIndustry: getTopIndustry(mergedJobs),
         lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-        scrapingStats: apiResults
+        lastDailyCheckAt: admin.firestore.FieldValue.serverTimestamp(),
+        scrapingStats: apiResults,
+        feedStaleWarning: admin.firestore.FieldValue.delete(),
+        configError: admin.firestore.FieldValue.delete()
       };
-      await careersRef.set(jobsData);
-      console.log(`✅ Capital City Careers updated: ${allJobs.length} jobs saved`);
-    } else if (prevCount > 0) {
+      await careersRef.set(jobsData, { merge: true });
+      console.log(`✅ Capital City Careers: ${mergedJobs.length} active (${postedToday} posted today, ${allJobs.length} from APIs, ${prevJobs.length} previous)`);
+    } else if (prevJobs.length > 0) {
       const noApiCreds = !hasUsaJobsCreds && !hasAdzunaCreds;
       await careersRef.set(
         {
+          jobs: [],
+          totalCount: 0,
           scrapingStats: apiResults,
+          lastDailyCheckAt: admin.firestore.FieldValue.serverTimestamp(),
           feedStaleWarning: noApiCreds
             ? 'Job APIs are not configured on the server; showing your last saved listings. Add USAJOBS or Adzuna keys in Vercel to refresh.'
             : 'Latest sync returned no new listings; showing your previous feed. Try again later or check Vercel logs for USAJOBS/Adzuna.',
@@ -1242,7 +1391,7 @@ const runJobsCron = async () => {
         },
         { merge: true }
       );
-      console.warn('⚠️ Capital City Careers: 0 this run — kept previous jobs in Firestore');
+      console.warn('⚠️ Capital City Careers: 0 active jobs after merge — cleared expired listings');
     } else {
       const noApiCreds = !hasUsaJobsCreds && !hasAdzunaCreds;
       await careersRef.set({
@@ -1523,6 +1672,13 @@ const runMontgomeryPulseCron = async () => {
     console.log(`\n📊 Scrape Summary: ${allScrapedContent.length} URLs succeeded out of ${montgomeryUrls.length}`);
     if (allScrapedContent.length === 0) {
       console.error('❌ CRITICAL: No content scraped from Montgomery URLs. Aborting pulse update.');
+      await db.collection('dashboards').doc('montgomeryPulse').set(
+        {
+          lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastRunError: 'No content scraped from city websites'
+        },
+        { merge: true }
+      );
       return;
     }
 
@@ -1535,9 +1691,10 @@ const runMontgomeryPulseCron = async () => {
     1. Categorize it as exactly one of: "council", "mayor", "ordinance", "deadline", or "meeting"
     2. Write a clear 2-3 sentence plain English summary
     3. Extract the title/headline (max 10 words)
-    4. Extract any deadline date if mentioned (as ISO date string or null)
-    5. Extract any action link if there's a registration/application/more info URL (or null)
-    6. Suggest an action label: "Apply Now", "Register", "Read More", or null
+    4. Extract the article publication date from the page text or URL (required when visible)
+    5. Extract any deadline date if mentioned (as ISO date string or null)
+    6. Extract any action link if there's a registration/application/more info URL (or null)
+    7. Suggest an action label: "Apply Now", "Register", "Read More", or null
     
     Return ONLY a valid JSON array with this exact structure:
     [
@@ -1545,6 +1702,7 @@ const runMontgomeryPulseCron = async () => {
         "category": "council" | "mayor" | "ordinance" | "deadline" | "meeting",
         "title": "short headline",
         "summary": "2-3 sentence summary in plain English",
+        "publishedAt": "YYYY-MM-DD",
         "deadline": "YYYY-MM-DD" or null,
         "actionLink": "https://..." or null,
         "actionLabel": "Apply Now" | "Register" | "Read More" | null,
@@ -1586,10 +1744,12 @@ const runMontgomeryPulseCron = async () => {
         const title = `${categoryLabel} Update from Montgomery`;
         const summary = compact.slice(0, 300) || `Latest ${categoryLabel.toLowerCase()} update from City of Montgomery. Visit the link for full details and official announcements.`;
 
+        const pub = parsePulsePublishedDate({ source: url });
         return {
           category,
           title,
           summary,
+          publishedAt: pub ? pub.toISOString().slice(0, 10) : null,
           deadline: null,
           actionLink: url,
           actionLabel: 'Read More',
@@ -1617,6 +1777,13 @@ const runMontgomeryPulseCron = async () => {
 
     if (!Array.isArray(pulseItems) || pulseItems.length === 0) {
       console.error('❌ No pulse items extracted; fallback also produced no records');
+      await db.collection('dashboards').doc('montgomeryPulse').set(
+        {
+          lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastRunError: 'No items extracted from scraped content'
+        },
+        { merge: true }
+      );
       return;
     }
 
@@ -1625,30 +1792,33 @@ const runMontgomeryPulseCron = async () => {
     const collection = db.collection('montgomery_pulse');
     let savedCount = 0;
     let duplicateCount = 0;
+    let updatedCount = 0;
 
     for (const item of pulseItems) {
       try {
         // Create a unique ID based on title + source to avoid duplicates
         const itemId = Buffer.from(`${item.title}-${item.source}`).toString('base64').substring(0, 20);
-        
-        // Check if already exists
-        const existing = await collection.doc(itemId).get();
-        if (existing.exists) {
-          duplicateCount++;
-          continue;
-        }
-
-        // Save new item
-        await collection.doc(itemId).set({
+        const pubFields = pulsePublishedFirestoreValue(item);
+        const payload = {
           category: item.category || 'council',
           title: item.title || 'Untitled',
           summary: item.summary || '',
-          date: admin.firestore.FieldValue.serverTimestamp(),
+          ...pubFields,
           deadline: item.deadline || null,
           actionLink: item.actionLink || null,
           actionLabel: item.actionLabel || null,
           source: item.source || ''
-        });
+        };
+
+        const existing = await collection.doc(itemId).get();
+        if (existing.exists) {
+          duplicateCount++;
+          await collection.doc(itemId).set(payload, { merge: true });
+          updatedCount++;
+          continue;
+        }
+
+        await collection.doc(itemId).set(payload);
         
         savedCount++;
       } catch (error) {
@@ -1656,11 +1826,35 @@ const runMontgomeryPulseCron = async () => {
       }
     }
 
-    console.log(`\n✅ COMPLETE: ${savedCount} new items saved | ${duplicateCount} duplicates skipped | ${pulseItems.length} total extracted`);
-    console.log(`   Last update timestamp stored in Firestore\n`);
+    const feedSnap = await collection.limit(500).get();
+    await db.collection('dashboards').doc('montgomeryPulse').set(
+      {
+        lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastDailyCheckAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastRunSaved: savedCount,
+        lastRunDuplicates: duplicateCount,
+        lastRunUpdated: updatedCount,
+        totalInFeed: feedSnap.size
+      },
+      { merge: true }
+    );
+
+    console.log(`\n✅ COMPLETE: ${savedCount} new | ${updatedCount} dates refreshed | ${duplicateCount} duplicates | ${pulseItems.length} extracted`);
+    console.log(`   Pulse sync metadata updated (${feedSnap.size} items in feed)\n`);
 
   } catch (error) {
     console.error('❌ Montgomery Pulse cron failed:', error.message);
+    try {
+      await db.collection('dashboards').doc('montgomeryPulse').set(
+        {
+          lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastRunError: error.message
+        },
+        { merge: true }
+      );
+    } catch (metaErr) {
+      console.error('❌ Failed to write pulse sync metadata:', metaErr.message);
+    }
   }
 };
 
@@ -1672,11 +1866,11 @@ app.get('/api/cron/refresh/opportunities', verifyVercelCron, cronRefreshHandler(
 app.get('/api/cron/refresh/pulse', verifyVercelCron, cronRefreshHandler('pulse', runMontgomeryPulseCron));
 
 if (process.env.VERCEL !== '1') {
-  cron.schedule('0 */6 * * *', runJobsCron);
+  cron.schedule('0 6 * * *', runJobsCron);
   cron.schedule('0 0 * * *', runBusinessCron);
   cron.schedule('0 0 1 * *', runEconomyCron);
   cron.schedule('0 2 * * *', runOpportunityCron);
-  cron.schedule('0 */6 * * *', runMontgomeryPulseCron);
+  cron.schedule('0 8 * * *', runMontgomeryPulseCron);
 }
 
 async function initializeOnBoot() {

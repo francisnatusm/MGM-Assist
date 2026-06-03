@@ -91,12 +91,12 @@ const CapitalCityCareers = () => {
                                 {data.feedStaleWarning}
                             </p>
                         )}
-                        <p className="text-gray-400 text-sm mb-4">Live feed of Montgomery jobs.</p>
+                        <p className="text-gray-400 text-sm mb-4">Live feed of Montgomery jobs — updated daily; open listings stay until they close.</p>
 
                         {/* Metrics */}
                         <div className="grid grid-cols-2 gap-4 mb-6">
                             <div className="bg-mgm-navy p-4 rounded-lg">
-                                <p className="text-xs text-gray-500">New Postings</p>
+                                <p className="text-xs text-gray-500">Open Postings</p>
                                 <p className="text-2xl font-bold text-mgm-gold">
                                     {loading ? '...' : data.totalCount || 0}
                                 </p>
@@ -113,18 +113,20 @@ const CapitalCityCareers = () => {
                         <ul className="space-y-3">
                             {displayJobs.length > 0 ? (
                                 displayJobs.map((job, index) => (
-                                    <li key={index} className="p-3 bg-mgm-navy rounded border border-gray-800 flex justify-between items-start hover:border-mgm-cyan transition-colors cursor-pointer">
-                                        <div>
-                                            <p className="font-medium text-gray-200">{job.title}</p>
-                                            <p className="text-xs text-gray-500">{job.company}</p>
-                                            <div className="flex items-center gap-1 mt-0.5">
-                                                <p className="text-xs text-gray-500">{(job.location || 'Montgomery, AL').replace(' (Nearby/Remote)', '')}</p>
-                                                {job.location?.includes('(Nearby/Remote)') && (
-                                                    <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/40 px-1.5 py-0.5 rounded-full">Near MGM</span>
-                                                )}
+                                    <li key={job.url || index}>
+                                        <a
+                                            href={job.url || '#'}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="p-3 bg-mgm-navy rounded border border-gray-800 flex justify-between items-start hover:border-mgm-cyan transition-colors block"
+                                        >
+                                            <div>
+                                                <p className="font-medium text-gray-200">{job.title}</p>
+                                                <p className="text-xs text-gray-500">{job.company}</p>
+                                                <p className="text-xs text-gray-500 mt-0.5">{(job.location || 'Montgomery, AL').replace(' (Nearby/Remote)', '')}</p>
                                             </div>
-                                        </div>
-                                        <span className="text-xs text-mgm-gold">{formatPostedTime(job.postedTime)}</span>
+                                            <span className="text-xs text-mgm-gold shrink-0 ml-2">{formatPostedTime(job.postedTime)}</span>
+                                        </a>
                                     </li>
                                 ))
                             ) : (

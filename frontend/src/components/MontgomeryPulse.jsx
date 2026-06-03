@@ -7,7 +7,6 @@ const MontgomeryPulse = () => {
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [lastUpdated, setLastUpdated] = useState(null);
     const [page, setPage] = useState(1);
 
     const categories = [
@@ -38,7 +37,6 @@ const MontgomeryPulse = () => {
                 setItems(prev => [...prev, ...(result.items || [])]);
             }
             
-            setLastUpdated(result.lastUpdated || new Date());
         } catch (err) {
             console.error('Error fetching Montgomery Pulse:', err);
             setError(err.message);
@@ -59,14 +57,24 @@ const MontgomeryPulse = () => {
         fetchData(false);
     };
 
-    const getTimeAgo = (date) => {
-        if (!date) return '';
-        const seconds = Math.floor((new Date() - new Date(date)) / 1000);
-        
-        if (seconds < 60) return 'just now';
-        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-        return `${Math.floor(seconds / 86400)}d ago`;
+    const getPostedLabel = (item) => {
+        const raw = item?.publishedAt || item?.date;
+        if (!raw) return 'Date unknown';
+        const posted = new Date(raw);
+        if (Number.isNaN(posted.getTime())) return 'Date unknown';
+
+        const seconds = Math.floor((Date.now() - posted.getTime()) / 1000);
+        const dateStr = posted.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+        });
+
+        if (seconds < 60) return `Posted ${dateStr} · just now`;
+        if (seconds < 3600) return `Posted ${dateStr} · ${Math.floor(seconds / 60)}m ago`;
+        if (seconds < 86400) return `Posted ${dateStr} · ${Math.floor(seconds / 3600)}h ago`;
+        if (seconds < 86400 * 14) return `Posted ${dateStr} · ${Math.floor(seconds / 86400)}d ago`;
+        return `Posted ${dateStr}`;
     };
 
     const getDaysUntil = (deadline) => {
@@ -102,12 +110,7 @@ const MontgomeryPulse = () => {
                 </div>
             </div>
 
-            {lastUpdated && (
-                <p className="text-xs text-gray-500 mb-3 flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    Updated {getTimeAgo(lastUpdated)}
-                </p>
-            )}
+            <p className="text-xs text-gray-500 mb-3">City news and public notices — checked daily, sorted by when each was published.</p>
 
             {/* Filter buttons */}
             <div className="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-700">
@@ -144,7 +147,10 @@ const MontgomeryPulse = () => {
                                     <span>{getCategoryIcon(item.category)}</span>
                                     <span className="capitalize">{item.category}</span>
                                     <span>·</span>
-                                    <span>{getTimeAgo(item.date)}</span>
+                                    <span className="flex items-center gap-1">
+                                        <Clock className="w-3 h-3" />
+                                        {getPostedLabel(item)}
+                                    </span>
                                 </div>
 
                                 {/* Title */}
