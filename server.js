@@ -587,49 +587,110 @@ function stripXmlCdata(text) {
     .trim();
 }
 
-/** Live headlines via RSS (updates throughout the day, no manual check). */
+function parseRssXmlToStories(xml, seen) {
+  const stories = [];
+  const blocks = String(xml || '').match(/<item>[\s\S]*?<\/item>/gi) || [];
+  for (const block of blocks.slice(0, 25)) {
+    const rawTitle = stripXmlCdata((block.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]);
+    const link = stripXmlCdata((block.match(/<link>([\s\S]*?)<\/link>/i) || [])[1]);
+    const pubRaw = stripXmlCdata((block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i) || [])[1]);
+    const title = decodeXmlEntities(rawTitle).split(' - ')[0].trim();
+    if (!title || title.length < 12 || !link || seen.has(link)) continue;
+    seen.add(link);
+    const pubDate = pubRaw ? new Date(pubRaw) : null;
+    const publishedAt =
+      pubDate && !Number.isNaN(pubDate.getTime()) ? pubDate.toISOString().slice(0, 10) : null;
+    stories.push({
+      category: inferPulseCategory(link, title),
+      title: title.slice(0, 120),
+      summary: decodeXmlEntities(rawTitle),
+      publishedAt,
+      deadline: null,
+      actionLink: link,
+      actionLabel: 'Read More',
+      source: link,
+      fromRss: true
+    });
+  }
+  return stories;
+}
+
+async function fetchRssFeedXml(feedUrl) {
+  try {
+    const res = await fetch(feedUrl, {
+      headers: { 'User-Agent': 'MGM-Assist/1.0 (Montgomery civic dashboard)' },
+      signal: typeof AbortSignal !== 'undefined' ? AbortSignal.timeout(20000) : undefined
+    });
+    if (res.ok) {
+      const xml = await res.text();
+      if (xml.includes('<item>')) return xml;
+    }
+  } catch (e) {
+    console.warn(`RSS direct fetch failed (${feedUrl}):`, e.message);
+  }
+
+  if (ACTIVE_MCP_SOURCE === 'brightdata') {
+    try {
+      const scrapeResult = await executeMcpTool('scrape_as_markdown', { url: feedUrl });
+      if (scrapeResult.ok) {
+        let content = scrapeResult.result?.content || scrapeResult.result?.data || scrapeResult.result || '';
+        if (typeof content !== 'string') content = JSON.stringify(content);
+        const xml = normalizeScrapeContent(content);
+        if (xml.includes('<item>')) return xml;
+      }
+    } catch (e) {
+      console.warn(`RSS Bright Data fetch failed (${feedUrl}):`, e.message);
+    }
+  }
+  return '';
+}
+
+/** Live headlines via RSS — merged on every API read for same-day news. */
 async function fetchPulseRssStories() {
   const feeds = [
     'https://news.google.com/rss/search?q=Montgomery+Alabama+government&hl=en-US&gl=US&ceid=US:en',
-    'https://news.google.com/rss/search?q=Montgomery+Alabama&hl=en-US&gl=US&ceid=US:en'
+    'https://news.google.com/rss/search?q=Montgomery+Alabama&hl=en-US&gl=US&ceid=US:en',
+    'https://www.al.com/arc/outboundfeeds/rss/section/montgomery/?outputType=xml'
   ];
   const stories = [];
   const seen = new Set();
 
   for (const feedUrl of feeds) {
-    try {
-      const res = await fetch(feedUrl, {
-        headers: { 'User-Agent': 'MGM-Assist/1.0 (Montgomery civic dashboard)' }
-      });
-      if (!res.ok) continue;
-      const xml = await res.text();
-      const blocks = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
-      for (const block of blocks.slice(0, 20)) {
-        const rawTitle = stripXmlCdata((block.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]);
-        const link = stripXmlCdata((block.match(/<link>([\s\S]*?)<\/link>/i) || [])[1]);
-        const pubRaw = stripXmlCdata((block.match(/<pubDate>([\s\S]*?)<\/pubDate>/i) || [])[1]);
-        const title = decodeXmlEntities(rawTitle).split(' - ')[0].trim();
-        if (!title || title.length < 12 || !link || seen.has(link)) continue;
-        seen.add(link);
-        const pubDate = pubRaw ? new Date(pubRaw) : null;
-        stories.push({
-          category: inferPulseCategory(link, title),
-          title: title.slice(0, 120),
-          summary: decodeXmlEntities(rawTitle),
-          publishedAt:
-            pubDate && !Number.isNaN(pubDate.getTime()) ? pubDate.toISOString().slice(0, 10) : null,
-          deadline: null,
-          actionLink: link,
-          actionLabel: 'Read More',
-          source: link
-        });
-      }
-    } catch (e) {
-      console.warn(`RSS fetch failed (${feedUrl}):`, e.message);
-    }
+    const xml = await fetchRssFeedXml(feedUrl);
+    if (!xml) continue;
+    stories.push(...parseRssXmlToStories(xml, seen));
   }
   console.log(`  📡 RSS: ${stories.length} Montgomery headlines`);
   return stories;
+}
+
+function formatPulseItemForApi(item) {
+  const publishedAt = item.publishedAt || (item.date ? String(item.date).slice(0, 10) : null);
+  const iso = publishedAt
+    ? new Date(publishedAt).toISOString()
+    : item.date?.toDate
+      ? item.date.toDate().toISOString()
+      : typeof item.date === 'string'
+        ? item.date
+        : null;
+  const id =
+    item.id ||
+    Buffer.from(`${item.title}-${item.actionLink || item.source || ''}`)
+      .toString('base64')
+      .substring(0, 20);
+  return {
+    id,
+    ...item,
+    publishedAt: publishedAt || (iso ? iso.slice(0, 10) : null),
+    date: iso
+  };
+}
+
+function mergePulseFeedForApi(dbItems, rssItems) {
+  const merged = mergePulseStoryLists(rssItems, dbItems);
+  return sortPulseFeedItems(merged.map(formatPulseItemForApi)).filter(
+    (item) => !isGenericPulseDigest(item) && !item.isDigest
+  );
 }
 
 /** Bright Data: scrape individual article pages for fresh dates and summaries. */
@@ -1161,20 +1222,19 @@ app.get('/api/montgomery-pulse', async (req, res) => {
 
     const snapshot = await query.get();
     
-    let allItems = snapshot.docs.map(doc => {
+    const dbItems = snapshot.docs.map(doc => {
       const data = doc.data();
       const publishedAt = resolvePulseItemPublishedAt(data);
-      return {
+      return formatPulseItemForApi({
         id: doc.id,
         ...data,
         publishedAt: publishedAt ? publishedAt.slice(0, 10) : null,
         date: publishedAt
-      };
+      });
     });
 
-    allItems = sortPulseFeedItems(allItems).filter(
-      (item) => !isGenericPulseDigest(item) && !item.isDigest
-    );
+    const rssLive = await fetchPulseRssStories();
+    let allItems = mergePulseFeedForApi(dbItems, rssLive);
 
     // Client-side filtering by category
     if (category && category !== 'all') {
@@ -2200,7 +2260,7 @@ const runMontgomeryPulseCron = async () => {
         // Create a unique ID based on title + source to avoid duplicates
         if (isGenericPulseDigest(item) && pulseItems.some((p) => !isGenericPulseDigest(p))) continue;
 
-        const itemId = Buffer.from(`${item.title}-${item.actionLink || item.source}`)
+        const itemId = Buffer.from(`${item.actionLink || item.source || item.title}`)
           .toString('base64')
           .substring(0, 20);
         const pubFields = pulsePublishedFirestoreValue(item);
