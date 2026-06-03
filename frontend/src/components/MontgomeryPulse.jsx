@@ -104,7 +104,8 @@ const MontgomeryPulse = () => {
                     Montgomery Pulse
                 </h2>
                 <div className="flex items-center gap-2">
-                    <span className="text-xs bg-mgm-blue/20 text-mgm-blue px-2 py-1 rounded-full">
+                    <span className="text-xs bg-mgm-green/20 text-mgm-green px-2 py-1 rounded-full flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 bg-mgm-green rounded-full"></span>
                         {loading ? 'Loading...' : 'Daily'}
                     </span>
                     <button
