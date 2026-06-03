@@ -424,6 +424,24 @@ function parseClaudeJsonArray(message) {
   throw new Error('No parsable JSON array found');
 }
 
+function isGenericPulseDigest(item) {
+  return / Update from Montgomery$/i.test(String(item?.title || '').trim());
+}
+
+/** Pull the newest YYYY-MM-DD (or similar) found in free text. */
+function extractNewestDateFromText(text) {
+  const found = [];
+  const re = /\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b/g;
+  let m;
+  const body = String(text || '');
+  while ((m = re.exec(body)) !== null) {
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12));
+    if (!Number.isNaN(d.getTime()) && d.getFullYear() >= 2020) found.push(d);
+  }
+  if (!found.length) return null;
+  return found.reduce((a, b) => (a > b ? a : b));
+}
+
 /** Best-effort publication date for a pulse story (not cron ingest time). */
 function parsePulsePublishedDate(item) {
   const candidates = [item?.publishedAt, item?.publishedDate, item?.postedAt, item?.date].filter(Boolean);
@@ -440,7 +458,34 @@ function parsePulsePublishedDate(item) {
     const d = new Date(Date.UTC(Number(urlMatch[1]), Number(urlMatch[2]) - 1, Number(urlMatch[3]), 12));
     if (!Number.isNaN(d.getTime())) return d;
   }
+  const fromText = extractNewestDateFromText(item?.summary || item?.content || '');
+  if (fromText) return fromText;
   return null;
+}
+
+function sortPulseFeedItems(items) {
+  return [...(items || [])].sort((a, b) => {
+    const aDigest = isGenericPulseDigest(a) || a.isDigest ? 1 : 0;
+    const bDigest = isGenericPulseDigest(b) || b.isDigest ? 1 : 0;
+    if (aDigest !== bDigest) return aDigest - bDigest;
+    return new Date(b.date || 0) - new Date(a.date || 0);
+  });
+}
+
+function pulseFeedNote(items) {
+  const real = (items || []).filter((i) => !isGenericPulseDigest(i) && !i.isDigest);
+  const dayAgo = real
+    .map((i) => daysSinceJobPosted(i.date))
+    .filter((d) => d !== null);
+  const newestDays = dayAgo.length ? Math.min(...dayAgo) : null;
+  if (newestDays === null) {
+    return 'Checking city sources daily. No dated headlines parsed yet — try again after the next sync.';
+  }
+  if (newestDays === 0) return 'Newest parsed city headline was posted today.';
+  if (newestDays <= 14) {
+    return `Newest parsed city headline was posted ${newestDays} day(s) ago. The city site may have newer items we have not extracted yet — use Read More on each card or the city news page directly.`;
+  }
+  return `Newest parsed headline is ${newestDays} days old. We check sources daily; some updates only appear as site digests until parsed into individual stories.`;
 }
 
 function resolvePulseItemPublishedAt(data) {
@@ -456,16 +501,22 @@ function resolvePulseItemPublishedAt(data) {
 }
 
 function pulsePublishedFirestoreValue(item) {
+  const digest = isGenericPulseDigest(item) || item?.isDigest;
   const d = parsePulsePublishedDate(item);
   if (d) {
     return {
       date: admin.firestore.Timestamp.fromDate(d),
-      publishedAt: d.toISOString().slice(0, 10)
+      publishedAt: d.toISOString().slice(0, 10),
+      isDigest: Boolean(digest)
     };
+  }
+  if (digest) {
+    return { date: null, publishedAt: null, isDigest: true };
   }
   return {
     date: admin.firestore.FieldValue.serverTimestamp(),
-    publishedAt: null
+    publishedAt: null,
+    isDigest: false
   };
 }
 
@@ -896,7 +947,7 @@ app.get('/api/montgomery-pulse', async (req, res) => {
       };
     });
 
-    allItems.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    allItems = sortPulseFeedItems(allItems);
 
     // Client-side filtering by category
     if (category && category !== 'all') {
@@ -911,7 +962,8 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     res.json({
       items,
       lastUpdated: newestStoryAt,
-      totalInFeed: allItems.length
+      totalInFeed: allItems.length,
+      feedNote: pulseFeedNote(allItems)
     });
   } catch (error) {
     console.error('Error fetching Montgomery Pulse data:', error);
@@ -1729,7 +1781,8 @@ const runMontgomeryPulseCron = async () => {
       'https://www.montgomeryal.gov/government/stay-informed/public-notices',
       'https://www.montgomeryal.gov/government/city-government/city-council',
       'https://www.montgomeryal.gov/government/city-government/mayor-s-office',
-      'https://www.montgomeryal.gov/government/city-government/city-calendar'
+      'https://www.montgomeryal.gov/government/city-government/city-calendar',
+      'https://www.mc-ala.org/'
     ];
 
     const allScrapedContent = [];
@@ -1813,8 +1866,10 @@ const runMontgomeryPulseCron = async () => {
       }
     ]
     
+    Important: Extract EVERY distinct news headline with its real publication date from the text. Do not skip items posted between late May and early June 2026.
+    
     Scraped content from Montgomery websites:
-    ${JSON.stringify(allScrapedContent).slice(0, 8000)}`;
+    ${JSON.stringify(allScrapedContent).slice(0, 16000)}`;
 
     let pulseItems = [];
     const buildFallbackItems = () => {
@@ -1847,12 +1902,15 @@ const runMontgomeryPulseCron = async () => {
         const title = `${categoryLabel} Update from Montgomery`;
         const summary = compact.slice(0, 300) || `Latest ${categoryLabel.toLowerCase()} update from City of Montgomery. Visit the link for full details and official announcements.`;
 
-        const pub = parsePulsePublishedDate({ source: url });
+        const textDate = extractNewestDateFromText(compact);
+        const pub = textDate || parsePulsePublishedDate({ source: url, summary: compact });
         return {
           category,
           title,
           summary,
+          content: compact.slice(0, 2000),
           publishedAt: pub ? pub.toISOString().slice(0, 10) : null,
+          isDigest: true,
           deadline: null,
           actionLink: url,
           actionLabel: 'Read More',
@@ -1906,6 +1964,7 @@ const runMontgomeryPulseCron = async () => {
           category: item.category || 'council',
           title: item.title || 'Untitled',
           summary: item.summary || '',
+          content: item.content || null,
           ...pubFields,
           deadline: item.deadline || null,
           actionLink: item.actionLink || null,

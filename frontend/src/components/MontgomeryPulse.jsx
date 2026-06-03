@@ -8,6 +8,7 @@ const MontgomeryPulse = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [page, setPage] = useState(1);
+    const [feedNote, setFeedNote] = useState(null);
 
     const categories = [
         { id: 'all', label: 'All', icon: '🔔' },
@@ -35,6 +36,7 @@ const MontgomeryPulse = () => {
             if (resetPage) {
                 setItems(result.items || []);
                 setPage(1);
+                setFeedNote(result.feedNote || null);
             } else {
                 setItems(prev => [...prev, ...(result.items || [])]);
             }
@@ -112,7 +114,12 @@ const MontgomeryPulse = () => {
                 </div>
             </div>
 
-            <p className="text-xs text-gray-500 mb-3">City news and public notices — checked daily, sorted by when each was published.</p>
+            <p className="text-xs text-gray-500 mb-3">City news and public notices — checked daily, sorted by publish date.</p>
+            {feedNote && (
+                <p className="text-xs text-amber-200/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2 mb-3">
+                    {feedNote}
+                </p>
+            )}
 
             {/* Filter buttons */}
             <div className="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-700">
@@ -152,6 +159,9 @@ const MontgomeryPulse = () => {
                                     <span className="flex items-center gap-1">
                                         <Clock className="w-3 h-3" />
                                         {getPostedLabel(item)}
+                                        {(item.isDigest || / Update from Montgomery$/i.test(item.title || '')) && (
+                                            <span className="text-[10px] text-gray-500">(source page)</span>
+                                        )}
                                     </span>
                                 </div>
 
