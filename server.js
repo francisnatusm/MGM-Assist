@@ -623,7 +623,14 @@ app.get('/api/health', async (req, res) => {
     ok: true,
     firebaseConfigured: Boolean(admin.apps.length),
     firestoreOk,
-    careersApiConfigured: careersEnvConfigured()
+    careersApiConfigured: careersEnvConfigured(),
+    dailyCrons: {
+      careers: '0 6 * * * UTC',
+      business: '0 0 * * * UTC',
+      pulse: '0 8 * * * UTC',
+      opportunities: '0 2 * * * UTC',
+      economy: '0 0 1 * * UTC'
+    }
   });
 });
 
@@ -706,6 +713,18 @@ function careersEnvConfigured() {
   return Boolean((k && e) || (a && b));
 }
 
+const DAILY_REFRESH_HOURS = 24;
+
+function hoursSinceFirestoreTime(ts) {
+  const d = ts?.toDate?.() ? ts.toDate() : ts ? new Date(ts) : null;
+  if (!d || Number.isNaN(d.getTime())) return 999;
+  return (Date.now() - d.getTime()) / 3600000;
+}
+
+function needsDailyCronRun(ts, maxHours = DAILY_REFRESH_HOURS) {
+  return hoursSinceFirestoreTime(ts) >= maxHours;
+}
+
 // Get Capital City Careers data
 app.get('/api/dashboard/careers', async (req, res) => {
   try {
@@ -718,12 +737,10 @@ app.get('/api/dashboard/careers', async (req, res) => {
     let doc = await ref.get();
     const raw = doc.exists ? doc.data() : {};
     const n = Array.isArray(raw.jobs) ? raw.jobs.length : 0;
-    const lastCheck = raw.lastDailyCheckAt?.toDate?.() || raw.lastUpdated?.toDate?.();
-    const hoursSinceCheck = lastCheck ? (Date.now() - lastCheck.getTime()) / 3600000 : 999;
-    const needsDailyRefresh = hoursSinceCheck >= 12;
+    const lastCheckTs = raw.lastDailyCheckAt || raw.lastUpdated;
     const feedLooksThin = n > 0 && n < 5;
 
-    if (careersEnvConfigured() && (n === 0 || needsDailyRefresh || feedLooksThin)) {
+    if (careersEnvConfigured() && (n === 0 || needsDailyCronRun(lastCheckTs) || feedLooksThin)) {
       try {
         await runJobsCron();
       } catch (e) {
@@ -841,8 +858,27 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     }
 
     const { category, page = 1 } = req.query;
+    const pageNum = parseInt(page, 10) || 1;
     const limit = 10;
-    const offset = (parseInt(page) - 1) * limit;
+    const offset = (pageNum - 1) * limit;
+
+    const metaRef = db.collection('dashboards').doc('montgomeryPulse');
+    const metaSnap = await metaRef.get();
+    const meta = metaSnap.exists ? metaSnap.data() : {};
+    const pulseLastCheck = meta.lastDailyCheckAt || meta.lastSyncedAt;
+    const shouldRunPulseCron =
+      pageNum === 1 &&
+      (!category || category === 'all') &&
+      needsDailyCronRun(pulseLastCheck);
+
+    if (shouldRunPulseCron) {
+      try {
+        console.log('📅 Montgomery Pulse: daily refresh (cron backup on dashboard load)');
+        await runMontgomeryPulseCron();
+      } catch (e) {
+        console.error('GET /api/montgomery-pulse daily refresh:', e.message);
+      }
+    }
 
     let query = db.collection('montgomery_pulse')
       .orderBy('date', 'desc');

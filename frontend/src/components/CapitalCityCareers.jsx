@@ -30,10 +30,17 @@ const CapitalCityCareers = () => {
 
     useEffect(() => {
         fetchData();
-        // Refresh every 30 minutes
-        const interval = setInterval(fetchData, 30 * 60 * 1000);
+        // Re-fetch every 6 hours (server runs full daily sync via Vercel cron + 24h backup)
+        const interval = setInterval(fetchData, 6 * 60 * 60 * 1000);
         return () => clearInterval(interval);
     }, []);
+
+    const formatLastSync = (value) => {
+        if (!value) return null;
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    };
 
     const displayJobs = [...(data.jobs || [])].sort((a, b) => {
         const aTime = a?.postedTime ? new Date(a.postedTime).getTime() : 0;
@@ -74,7 +81,10 @@ const CapitalCityCareers = () => {
                     Capital City Careers
                 </h2>
                 <div className="flex items-center gap-2">
-                    <span className="text-xs bg-mgm-blue/20 text-mgm-blue px-2 py-1 rounded-full">
+                    <span
+                        className="text-xs bg-mgm-blue/20 text-mgm-blue px-2 py-1 rounded-full"
+                        title={formatLastSync(data.lastUpdated) ? `Last sync: ${formatLastSync(data.lastUpdated)}` : 'Auto-updates daily'}
+                    >
                         {loading ? 'Loading...' : 'Daily'}
                     </span>
                     <button 
@@ -103,7 +113,8 @@ const CapitalCityCareers = () => {
                             </p>
                         )}
                         <p className="text-gray-400 text-sm mb-2">
-                            Federal jobs for Montgomery and the River Region (includes Maxwell AFB). Open roles stay listed until they close.
+                            Federal jobs for Montgomery and the River Region (includes Maxwell AFB). Auto-updates daily
+                            {formatLastSync(data.lastUpdated) ? ` · last sync ${formatLastSync(data.lastUpdated)}` : ''}.
                         </p>
                         {data.feedNote && (
                             <p className="text-xs text-gray-500 mb-3">{data.feedNote}</p>

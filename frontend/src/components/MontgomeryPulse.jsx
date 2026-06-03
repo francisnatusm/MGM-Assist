@@ -24,7 +24,9 @@ const MontgomeryPulse = () => {
             setError(null);
             const currentPage = resetPage ? 1 : page;
             const categoryParam = activeFilter !== 'all' ? `&category=${activeFilter}` : '';
-            const response = await fetch(apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}`));
+            const response = await fetch(apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}`), {
+                cache: 'no-store'
+            });
             
             if (!response.ok) throw new Error('Failed to fetch Montgomery Pulse data');
             
@@ -48,7 +50,7 @@ const MontgomeryPulse = () => {
     useEffect(() => {
         fetchData(true);
         // Refresh every 30 minutes
-        const interval = setInterval(() => fetchData(true), 30 * 60 * 1000);
+        const interval = setInterval(() => fetchData(true), 6 * 60 * 60 * 1000);
         return () => clearInterval(interval);
     }, [activeFilter]);
 
