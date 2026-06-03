@@ -1355,8 +1355,10 @@ app.get('/api/montgomery-pulse', async (req, res) => {
       });
     });
 
-    const rssLive = await fetchPulseRssStories();
-    let allItems = mergePulseFeedForApi(dbItems, rssLive);
+    // Feed is read from Firestore only; Bright Data runs once daily via Vercel cron.
+    let allItems = sortPulseFeedItems(dbItems).filter(
+      (item) => !isGenericPulseDigest(item) && !item.isDigest
+    );
 
     // Client-side filtering by category
     if (category && category !== 'all') {
@@ -1373,7 +1375,7 @@ app.get('/api/montgomery-pulse', async (req, res) => {
       lastUpdated: newestStoryAt,
       totalInFeed: allItems.length,
       scrapeSource: meta.lastScrapeSource || null,
-      lastScrapeAt: meta.lastDailyCheckAt || meta.lastSyncedAt || null
+      lastScrapeAt: serializeForClient(meta.lastDailyCheckAt || meta.lastSyncedAt || null)
     });
   } catch (error) {
     console.error('Error fetching Montgomery Pulse data:', error);

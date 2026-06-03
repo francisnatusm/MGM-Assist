@@ -1,6 +1,11 @@
 {
   "version": 2,
   "installCommand": "npm install && cd frontend && npm install --include=dev",
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 300
+    }
+  },
   "builds": [
     {
       "src": "api/index.js",
