@@ -720,9 +720,10 @@ app.get('/api/dashboard/careers', async (req, res) => {
     const n = Array.isArray(raw.jobs) ? raw.jobs.length : 0;
     const lastCheck = raw.lastDailyCheckAt?.toDate?.() || raw.lastUpdated?.toDate?.();
     const hoursSinceCheck = lastCheck ? (Date.now() - lastCheck.getTime()) / 3600000 : 999;
-    const needsDailyRefresh = hoursSinceCheck >= 20;
+    const needsDailyRefresh = hoursSinceCheck >= 12;
+    const feedLooksThin = n > 0 && n < 5;
 
-    if (careersEnvConfigured() && (n === 0 || needsDailyRefresh)) {
+    if (careersEnvConfigured() && (n === 0 || needsDailyRefresh || feedLooksThin)) {
       try {
         await runJobsCron();
       } catch (e) {
@@ -745,7 +746,13 @@ app.get('/api/dashboard/careers', async (req, res) => {
       );
     }
 
-    res.json(serializeForClient(doc.data()));
+    const data = serializeForClient(doc.data());
+    const activeJobs = sortCareersForDisplay((data.jobs || []).filter(isCareerJobActive));
+    res.json({
+      ...data,
+      jobs: activeJobs.slice(0, CAREERS_MAX_LISTINGS),
+      totalCount: activeJobs.length
+    });
   } catch (error) {
     console.error('Error fetching careers data:', error);
     res.status(500).json({ error: error.message });
@@ -1096,20 +1103,24 @@ const getFirestore = () => {
   }
 };
 
-const CAREERS_MAX_AGE_DAYS = 90;
 const CAREERS_MAX_LISTINGS = 50;
 
+/** Keep listings until the employer close date passes (supports multi-day feeds). */
 function isCareerJobActive(job, now = new Date()) {
   if (job?.applicationCloseDate) {
     const close = new Date(job.applicationCloseDate);
     if (!Number.isNaN(close.getTime()) && close < now) return false;
   }
-  const posted = job?.postedTime ? new Date(job.postedTime) : null;
-  if (posted && !Number.isNaN(posted.getTime())) {
-    const ageDays = (now.getTime() - posted.getTime()) / (1000 * 60 * 60 * 24);
-    if (ageDays > CAREERS_MAX_AGE_DAYS) return false;
-  }
   return true;
+}
+
+function sortCareersForDisplay(jobs) {
+  return [...(jobs || [])].sort((a, b) => {
+    const aLocal = isMontgomeryAreaJob(a.location) ? 1 : 0;
+    const bLocal = isMontgomeryAreaJob(b.location) ? 1 : 0;
+    if (aLocal !== bLocal) return bLocal - aLocal;
+    return new Date(b.postedTime || 0) - new Date(a.postedTime || 0);
+  });
 }
 
 function isMontgomeryAreaJob(locationText) {
@@ -1132,14 +1143,7 @@ function mergeCareersJobs(prevJobs, freshJobs, now = new Date()) {
     if (!byUrl.has(key)) byUrl.set(key, job);
   }
 
-  return [...byUrl.values()]
-    .sort((a, b) => {
-      const aLocal = isMontgomeryAreaJob(a.location) ? 1 : 0;
-      const bLocal = isMontgomeryAreaJob(b.location) ? 1 : 0;
-      if (aLocal !== bLocal) return bLocal - aLocal;
-      return new Date(b.postedTime || 0) - new Date(a.postedTime || 0);
-    })
-    .slice(0, CAREERS_MAX_LISTINGS);
+  return sortCareersForDisplay([...byUrl.values()]).slice(0, CAREERS_MAX_LISTINGS);
 }
 
 // 1. Capital City Careers - Fetch real job listings from free public APIs (daily merge)
@@ -1255,28 +1259,29 @@ const runJobsCron = async () => {
             for (const item of items) pushUsaJob(item.MatchedObjectDescriptor, { skipAge: true, skipClose: true });
           }
           const strict = allFetched.filter(j => isMontgomeryAl(j.location));
-          const inAlabama = allFetched.filter(j => /alabama|\bal\b/i.test(String(j.location || '')));
-          let toAdd = strict;
-          if (toAdd.length < 8) {
-            const merged = [...strict];
-            const seen = new Set(strict.map(j => j.url));
-            for (const j of inAlabama) {
-              if (merged.length >= 20) break;
-              if (!seen.has(j.url)) {
-                merged.push(j);
-                seen.add(j.url);
-              }
-            }
-            toAdd = merged;
+          const seen = new Set();
+          const toAdd = [];
+          const pushUnique = (job) => {
+            const key = job.url || `${job.title}-${job.company}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            toAdd.push(job);
+          };
+          for (const j of sortCareersForDisplay(strict)) pushUnique(j);
+          for (const j of sortCareersForDisplay(allFetched)) {
+            if (toAdd.length >= CAREERS_MAX_LISTINGS) break;
+            pushUnique(j);
           }
           if (toAdd.length === 0) {
-            toAdd = allFetched.slice(0, 20).map(j => ({
-              ...j,
-              location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL'
-            }));
+            for (const j of allFetched.slice(0, CAREERS_MAX_LISTINGS)) {
+              pushUnique({
+                ...j,
+                location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL'
+              });
+            }
           }
           allJobs.push(...toAdd);
-          console.log(`✅ USAJobs: ${items.length} fetched, ${strict.length} strict Montgomery, ${toAdd.length} shown`);
+          console.log(`✅ USAJobs: ${items.length} fetched, ${strict.length} Montgomery, ${toAdd.length} in feed`);
           apiResults.success++;
         } else {
           console.warn(`⚠️ USAJobs: no items (last HTTP ${lastStatus}) — check USAJOBS_API_KEY + USAJOBS_EMAIL`);
@@ -1315,21 +1320,21 @@ const runJobsCron = async () => {
             });
           }
           const strictAdz = adzunaFetched.filter(j => isMontgomeryAl(j.location));
-          let toAddAdz = strictAdz;
-          if (toAddAdz.length < 8) {
-            const merged = [...strictAdz];
-            const seen = new Set(strictAdz.map(j => j.url));
-            for (const j of adzunaFetched) {
-              if (merged.length >= 20) break;
-              if (!seen.has(j.url)) {
-                merged.push(j);
-                seen.add(j.url);
-              }
-            }
-            toAddAdz = merged;
+          const seenAdz = new Set();
+          const toAddAdz = [];
+          const pushAdz = (job) => {
+            const key = job.url || `${job.title}-${job.company}`;
+            if (seenAdz.has(key)) return;
+            seenAdz.add(key);
+            toAddAdz.push(job);
+          };
+          for (const j of sortCareersForDisplay(strictAdz)) pushAdz(j);
+          for (const j of sortCareersForDisplay(adzunaFetched)) {
+            if (toAddAdz.length >= CAREERS_MAX_LISTINGS) break;
+            pushAdz(j);
           }
           if (toAddAdz.length === 0) {
-            toAddAdz = adzunaFetched.slice(0, 20).map(j => ({
+            adzunaFetched.slice(0, CAREERS_MAX_LISTINGS).forEach(j => pushAdz({
               ...j,
               location: j.location ? `${j.location} (Nearby/Remote)` : 'Nearby / Remote, AL'
             }));

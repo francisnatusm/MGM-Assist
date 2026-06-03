@@ -16,7 +16,7 @@ const CapitalCityCareers = () => {
         try {
             setLoading(true);
             setError(null);
-            const response = await fetch(apiUrl('/api/dashboard/careers'));
+            const response = await fetch(apiUrl('/api/dashboard/careers'), { cache: 'no-store' });
             if (!response.ok) throw new Error('Failed to fetch careers data');
             const result = await response.json();
             setData(result);
