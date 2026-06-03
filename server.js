@@ -472,20 +472,166 @@ function sortPulseFeedItems(items) {
   });
 }
 
-function pulseFeedNote(items) {
+function normalizeScrapeContent(content) {
+  if (typeof content !== 'string') return String(content || '');
+  const trimmed = content.trim();
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((x) => {
+            if (x?.url && x?.text) return `[${x.text}](${x.url})`;
+            return x?.text || '';
+          })
+          .join('\n');
+      }
+    } catch {
+      /* plain text */
+    }
+  }
+  return content;
+}
+
+function parseDateNearText(chunk) {
+  const monthRe =
+    /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),?\s+(20\d{2})\b/i;
+  const m = String(chunk || '').match(monthRe);
+  if (m) {
+    const months = {
+      january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+    };
+    const month = months[m[1].toLowerCase()];
+    if (month !== undefined) {
+      const d = new Date(Date.UTC(Number(m[3]), month, Number(m[2]), 12));
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+  }
+  return extractNewestDateFromText(chunk);
+}
+
+function inferPulseCategory(url, title) {
+  const u = String(url || '').toLowerCase();
+  const t = String(title || '').toLowerCase();
+  if (u.includes('mayor') || t.includes('mayor')) return 'mayor';
+  if (u.includes('council') || t.includes('council') || t.includes('commission')) return 'council';
+  if (u.includes('notice') || t.includes('deadline') || t.includes('notice')) return 'deadline';
+  if (u.includes('calendar') || t.includes('meeting') || t.includes('session')) return 'meeting';
+  if (u.includes('ordinance') || t.includes('ordinance') || t.includes('bill')) return 'ordinance';
+  return 'council';
+}
+
+/** Parse individual headlines/links from Bright Data markdown (no AI required). */
+function extractPulseStoriesFromScraped(allScrapedContent) {
+  const stories = [];
+  const seen = new Set();
+
+  for (const { url: pageUrl, content } of allScrapedContent || []) {
+    const text = normalizeScrapeContent(content);
+    const linkRe = /\[([^\]\n]{10,140})\]\((https?:[^)\s]+)\)/g;
+    let match;
+    while ((match = linkRe.exec(text)) !== null) {
+      const title = match[1].trim().replace(/\s+/g, ' ');
+      const link = match[2].trim();
+      if (/^(read more|click here|learn more|home|menu|skip)$/i.test(title)) continue;
+      if (!/montgomery|mc-ala|alabama|usajobs/i.test(link) && !/montgomery|alabama/i.test(title)) continue;
+      if (seen.has(link)) continue;
+      seen.add(link);
+
+      const context = text.slice(Math.max(0, match.index - 160), match.index + 240);
+      const pub = parseDateNearText(context) || parsePulsePublishedDate({ source: link });
+      stories.push({
+        category: inferPulseCategory(link, title),
+        title: title.length > 90 ? `${title.slice(0, 87)}...` : title,
+        summary: `Official posting: ${title}.`,
+        publishedAt: pub ? pub.toISOString().slice(0, 10) : null,
+        deadline: null,
+        actionLink: link,
+        actionLabel: 'Read More',
+        source: link
+      });
+    }
+  }
+
+  return stories;
+}
+
+function mergePulseStoryLists(...lists) {
+  const byLink = new Map();
+  for (const list of lists) {
+    for (const item of list || []) {
+      if (!item?.title || isGenericPulseDigest(item)) continue;
+      const key = item.actionLink || item.source || item.title;
+      if (!byLink.has(key)) byLink.set(key, item);
+    }
+  }
+  return [...byLink.values()];
+}
+
+/** Status from the latest Bright Data / scrape run (not “go check the website yourself”). */
+function pulseFeedNote(meta, items) {
+  if (meta?.lastRunError) {
+    return `Daily scrape did not complete (${meta.lastRunError}). Retrying automatically.`;
+  }
+
+  const sourceLabel =
+    meta?.lastScrapeSource === 'brightdata'
+      ? 'Bright Data'
+      : meta?.lastScrapeSource === 'custom'
+        ? 'web fetch'
+        : 'city sources';
+  const urls = meta?.lastUrlsScraped ?? 0;
+  const extracted = meta?.lastRunExtracted ?? 0;
+  const saved = meta?.lastRunSaved ?? 0;
+  const updated = meta?.lastRunUpdated ?? 0;
+
   const real = (items || []).filter((i) => !isGenericPulseDigest(i) && !i.isDigest);
-  const dayAgo = real
-    .map((i) => daysSinceJobPosted(i.date))
-    .filter((d) => d !== null);
+  const dayAgo = real.map((i) => daysSinceJobPosted(i.date)).filter((d) => d !== null);
   const newestDays = dayAgo.length ? Math.min(...dayAgo) : null;
-  if (newestDays === null) {
-    return 'Checking city sources daily. No dated headlines parsed yet — try again after the next sync.';
+
+  let line = `Checked ${urls} pages via ${sourceLabel} today`;
+  if (extracted > 0) line += ` · ${extracted} headlines found`;
+  if (saved > 0) line += ` · ${saved} new in feed`;
+  else if (updated > 0) line += ` · ${updated} refreshed`;
+  else line += ' · no new headlines';
+
+  if (newestDays === 0) return `${line}. Newest story posted today.`;
+  if (newestDays !== null && newestDays <= 30) {
+    return `${line}. Newest story in feed: ${newestDays} day(s) ago.`;
   }
-  if (newestDays === 0) return 'Newest parsed city headline was posted today.';
-  if (newestDays <= 14) {
-    return `Newest parsed city headline was posted ${newestDays} day(s) ago. The city site may have newer items we have not extracted yet — use Read More on each card or the city news page directly.`;
+  return `${line}.`;
+}
+
+async function runClaudeJsonExtraction(prompt) {
+  if (!API_KEY) return { ok: false, status: 0, message: 'ANTHROPIC_API_KEY not set' };
+
+  for (const model of MODELS_TO_TRY) {
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 4096,
+          system:
+            'You extract civic news from scraped HTML/markdown. Respond with ONLY a valid JSON array — no markdown fences, no commentary.',
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) continue;
+      const text = data?.content?.find((c) => c.type === 'text')?.text || '';
+      if (text) return { ok: true, message: text, model };
+    } catch (e) {
+      console.warn(`Claude extract (${model}):`, e.message);
+    }
   }
-  return `Newest parsed headline is ${newestDays} days old. We check sources daily; some updates only appear as site digests until parsed into individual stories.`;
+  return { ok: false, status: 500, message: 'Claude extraction failed' };
 }
 
 function resolvePulseItemPublishedAt(data) {
@@ -963,7 +1109,9 @@ app.get('/api/montgomery-pulse', async (req, res) => {
       items,
       lastUpdated: newestStoryAt,
       totalInFeed: allItems.length,
-      feedNote: pulseFeedNote(allItems)
+      feedNote: pulseFeedNote(meta, allItems),
+      scrapeSource: meta.lastScrapeSource || null,
+      lastScrapeAt: meta.lastDailyCheckAt || meta.lastSyncedAt || null
     });
   } catch (error) {
     console.error('Error fetching Montgomery Pulse data:', error);
@@ -1814,8 +1962,8 @@ const runMontgomeryPulseCron = async () => {
           if (typeof content !== 'string') {
             content = JSON.stringify(content);
           }
-          const truncated = content.substring(0, 5000);
-          console.log(`  ✅ Scraped ${content.length} chars (using first 5000)`);
+          const truncated = content.substring(0, 12000);
+          console.log(`  ✅ Scraped ${content.length} chars (using first ${truncated.length})`);
           allScrapedContent.push({ url, content: truncated });
         } else {
           console.warn(`  ⚠️ Unexpected result format:`, Object.keys(scrapeResult || {}));
@@ -1919,21 +2067,28 @@ const runMontgomeryPulseCron = async () => {
       });
     };
 
-    const claudeResult = await runConversationWithTools(MODELS_TO_TRY[0], prompt);
+    const markdownItems = extractPulseStoriesFromScraped(allScrapedContent);
+    console.log(`  📰 Markdown/link extraction: ${markdownItems.length} headlines`);
+
+    let claudeItems = [];
+    const claudeResult = await runClaudeJsonExtraction(prompt);
 
     if (!claudeResult.ok) {
-      console.error(`  ❌ Claude call failed (${claudeResult.status}): ${claudeResult.data?.error?.message || 'unknown error'}`);
-      pulseItems = buildFallbackItems();
+      console.error(`  ❌ Claude extraction failed: ${claudeResult.message}`);
     } else {
-      console.log(`  ✅ Claude responded`);
+      console.log(`  ✅ Claude responded (${claudeResult.model})`);
       try {
-        pulseItems = parseClaudeJsonArray(claudeResult.message);
-        console.log(`  ✅ Parsed ${pulseItems.length} items from Claude`);
+        claudeItems = parseClaudeJsonArray(claudeResult.message);
+        console.log(`  ✅ Parsed ${claudeItems.length} items from Claude`);
       } catch (e) {
-        console.error(`  ❌ ${e.message}. Raw first 200 chars:`, String(claudeResult.message || '').substring(0, 200));
-        console.error(`  ❌ Failed to parse Claude JSON: ${e.message}`);
-        pulseItems = buildFallbackItems();
+        console.error(`  ❌ Claude JSON parse: ${e.message}`);
       }
+    }
+
+    pulseItems = mergePulseStoryLists(markdownItems, claudeItems);
+    if (pulseItems.length === 0) {
+      console.warn('  ⚠️ No headlines from markdown or Claude; using page digests as last resort');
+      pulseItems = buildFallbackItems();
     }
 
     if (!Array.isArray(pulseItems) || pulseItems.length === 0) {
@@ -1958,7 +2113,11 @@ const runMontgomeryPulseCron = async () => {
     for (const item of pulseItems) {
       try {
         // Create a unique ID based on title + source to avoid duplicates
-        const itemId = Buffer.from(`${item.title}-${item.source}`).toString('base64').substring(0, 20);
+        if (isGenericPulseDigest(item) && pulseItems.some((p) => !isGenericPulseDigest(p))) continue;
+
+        const itemId = Buffer.from(`${item.title}-${item.actionLink || item.source}`)
+          .toString('base64')
+          .substring(0, 20);
         const pubFields = pulsePublishedFirestoreValue(item);
         const payload = {
           category: item.category || 'council',
@@ -1993,9 +2152,13 @@ const runMontgomeryPulseCron = async () => {
       {
         lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
         lastDailyCheckAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastScrapeSource: ACTIVE_MCP_SOURCE,
+        lastUrlsScraped: allScrapedContent.length,
+        lastRunExtracted: pulseItems.filter((p) => !isGenericPulseDigest(p)).length,
         lastRunSaved: savedCount,
         lastRunDuplicates: duplicateCount,
         lastRunUpdated: updatedCount,
+        lastRunError: admin.firestore.FieldValue.delete(),
         totalInFeed: feedSnap.size
       },
       { merge: true }

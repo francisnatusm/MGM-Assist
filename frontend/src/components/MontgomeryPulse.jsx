@@ -114,9 +114,13 @@ const MontgomeryPulse = () => {
                 </div>
             </div>
 
-            <p className="text-xs text-gray-500 mb-3">City news and public notices — checked daily, sorted by publish date.</p>
+            <p className="text-xs text-gray-500 mb-2">City news — scraped daily with Bright Data, sorted by publish date.</p>
             {feedNote && (
-                <p className="text-xs text-amber-200/90 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2 mb-3">
+                <p className={`text-xs mb-3 rounded-lg px-3 py-2 border ${
+                    feedNote.includes('did not complete')
+                        ? 'text-red-200/90 bg-red-500/10 border-red-500/25'
+                        : 'text-gray-400 bg-mgm-navy/60 border-gray-700'
+                }`}>
                     {feedNote}
                 </p>
             )}
@@ -159,9 +163,6 @@ const MontgomeryPulse = () => {
                                     <span className="flex items-center gap-1">
                                         <Clock className="w-3 h-3" />
                                         {getPostedLabel(item)}
-                                        {(item.isDigest || / Update from Montgomery$/i.test(item.title || '')) && (
-                                            <span className="text-[10px] text-gray-500">(source page)</span>
-                                        )}
                                     </span>
                                 </div>
 
