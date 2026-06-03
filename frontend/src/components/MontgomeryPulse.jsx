@@ -8,7 +8,6 @@ const MontgomeryPulse = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [page, setPage] = useState(1);
-    const [feedNote, setFeedNote] = useState(null);
 
     const categories = [
         { id: 'all', label: 'All', icon: '🔔' },
@@ -25,9 +24,10 @@ const MontgomeryPulse = () => {
             setError(null);
             const currentPage = resetPage ? 1 : page;
             const categoryParam = activeFilter !== 'all' ? `&category=${activeFilter}` : '';
-            const response = await fetch(apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}`), {
-                cache: 'no-store'
-            });
+            const response = await fetch(
+                apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}&live=1`),
+                { cache: 'no-store' }
+            );
             
             if (!response.ok) throw new Error('Failed to fetch Montgomery Pulse data');
             
@@ -36,7 +36,6 @@ const MontgomeryPulse = () => {
             if (resetPage) {
                 setItems(result.items || []);
                 setPage(1);
-                setFeedNote(result.feedNote || null);
             } else {
                 setItems(prev => [...prev, ...(result.items || [])]);
             }
@@ -52,7 +51,7 @@ const MontgomeryPulse = () => {
     useEffect(() => {
         fetchData(true);
         // Refresh every 30 minutes
-        const interval = setInterval(() => fetchData(true), 6 * 60 * 60 * 1000);
+        const interval = setInterval(() => fetchData(true), 15 * 60 * 1000);
         return () => clearInterval(interval);
     }, [activeFilter]);
 
@@ -102,7 +101,7 @@ const MontgomeryPulse = () => {
                 <div className="flex items-center gap-2">
                     <span className="text-xs bg-mgm-green/20 text-mgm-green px-2 py-1 rounded-full flex items-center gap-1">
                         <span className="w-1.5 h-1.5 bg-mgm-green rounded-full animate-pulse"></span>
-                        Daily
+                        Live
                     </span>
                     <button 
                         onClick={() => fetchData(true)} 
@@ -114,16 +113,7 @@ const MontgomeryPulse = () => {
                 </div>
             </div>
 
-            <p className="text-xs text-gray-500 mb-2">City news — scraped daily with Bright Data, sorted by publish date.</p>
-            {feedNote && (
-                <p className={`text-xs mb-3 rounded-lg px-3 py-2 border ${
-                    feedNote.includes('did not complete')
-                        ? 'text-red-200/90 bg-red-500/10 border-red-500/25'
-                        : 'text-gray-400 bg-mgm-navy/60 border-gray-700'
-                }`}>
-                    {feedNote}
-                </p>
-            )}
+            <p className="text-xs text-gray-500 mb-3">Montgomery news — live via Bright Data + RSS, refreshed when you open this page.</p>
 
             {/* Filter buttons */}
             <div className="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-700">
