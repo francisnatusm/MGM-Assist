@@ -8,8 +8,6 @@ const MontgomeryPulse = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [page, setPage] = useState(1);
-    const [lastUpdated, setLastUpdated] = useState(null);
-    const [lastScrapeAt, setLastScrapeAt] = useState(null);
 
     const categories = [
         { id: 'all', label: 'All', icon: '🔔' },
@@ -37,8 +35,6 @@ const MontgomeryPulse = () => {
             if (!storedRes.ok) throw new Error('Failed to fetch Montgomery Pulse data');
 
             const result = await storedRes.json();
-            setLastUpdated(result.lastUpdated || null);
-            setLastScrapeAt(result.lastScrapeAt || null);
 
             let merged = (result.items || []).filter((item) => !isDigestItem(item));
 
@@ -100,29 +96,6 @@ const MontgomeryPulse = () => {
         return cat ? cat.icon : '📰';
     };
 
-    const formatLastSync = () => {
-        if (!lastScrapeAt) return null;
-        const d = new Date(lastScrapeAt);
-        if (Number.isNaN(d.getTime())) return null;
-        return d.toLocaleDateString(undefined, {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit'
-        });
-    };
-
-    const formatNewestHeadline = () => {
-        if (!lastUpdated) return null;
-        const d = new Date(lastUpdated);
-        if (Number.isNaN(d.getTime())) return null;
-        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    };
-
-    const lastSyncLabel = formatLastSync();
-    const newestLabel = formatNewestHeadline();
-
     return (
         <div className="bg-mgm-card rounded-xl p-6 shadow-lg border border-gray-800 flex flex-col h-96">
             <div className="flex justify-between items-center mb-4">
@@ -139,18 +112,11 @@ const MontgomeryPulse = () => {
                         onClick={() => fetchData(true)}
                         className="text-mgm-cyan hover:text-mgm-gold transition-colors"
                         disabled={loading}
-                        title="Reload saved feed (scraping runs once daily on the server)"
                     >
                         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                     </button>
                 </div>
             </div>
-
-            <p className="text-xs text-gray-500 mb-3">
-                Updated automatically once daily via Bright Data
-                {lastSyncLabel ? ` · last sync ${lastSyncLabel}` : ''}
-                {newestLabel ? ` · newest headline ${newestLabel}` : ''}.
-            </p>
 
             <div className="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-700">
                 {categories.map(cat => (

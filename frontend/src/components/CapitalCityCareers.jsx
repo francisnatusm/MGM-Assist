@@ -112,13 +112,7 @@ const CapitalCityCareers = () => {
                                 {data.feedStaleWarning}
                             </p>
                         )}
-                        <p className="text-gray-400 text-sm mb-2">
-                            Federal jobs for Montgomery and the River Region (includes Maxwell AFB). Auto-updates daily
-                            {formatLastSync(data.lastUpdated) ? ` · last sync ${formatLastSync(data.lastUpdated)}` : ''}.
-                        </p>
-                        {data.feedNote && (
-                            <p className="text-xs text-gray-500 mb-3">{data.feedNote}</p>
-                        )}
+                        <p className="text-gray-400 text-sm mb-3">Federal Jobs</p>
 
                         {/* Metrics */}
                         <div className="grid grid-cols-2 gap-4 mb-6">
