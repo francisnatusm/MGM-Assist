@@ -747,11 +747,24 @@ app.get('/api/dashboard/careers', async (req, res) => {
     }
 
     const data = serializeForClient(doc.data());
-    const activeJobs = sortCareersForDisplay((data.jobs || []).filter(isCareerJobActive));
+    const activeJobs = sortCareersForDisplay((data.jobs || []).filter(isCareerJobActive)).slice(
+      0,
+      CAREERS_MAX_LISTINGS
+    );
+    const stats = careersFeedStats(activeJobs);
     res.json({
       ...data,
-      jobs: activeJobs.slice(0, CAREERS_MAX_LISTINGS),
-      totalCount: activeJobs.length
+      jobs: activeJobs,
+      totalCount: activeJobs.length,
+      ...stats,
+      feedNote:
+        stats.newestMontgomeryDaysAgo === null
+          ? null
+          : stats.newestMontgomeryDaysAgo === 0
+            ? 'New Montgomery listings posted today.'
+            : stats.newestMontgomeryDaysAgo <= 7
+              ? `Newest Montgomery listing posted ${stats.newestMontgomeryDaysAgo} day(s) ago — federal postings can lag; still-open jobs stay listed.`
+              : `No new Montgomery city postings in the last week; showing open roles still accepting applications.`
     });
   } catch (error) {
     console.error('Error fetching careers data:', error);
@@ -1114,18 +1127,65 @@ function isCareerJobActive(job, now = new Date()) {
   return true;
 }
 
-function sortCareersForDisplay(jobs) {
-  return [...(jobs || [])].sort((a, b) => {
-    const aLocal = isMontgomeryAreaJob(a.location) ? 1 : 0;
-    const bLocal = isMontgomeryAreaJob(b.location) ? 1 : 0;
-    if (aLocal !== bLocal) return bLocal - aLocal;
-    return new Date(b.postedTime || 0) - new Date(a.postedTime || 0);
-  });
-}
+const CAREERS_LOCATION_TIER_ORDER = {
+  montgomery: 0,
+  'river-region': 1,
+  alabama: 2,
+  other: 3,
+  remote: 4
+};
 
 function isMontgomeryAreaJob(locationText) {
-  const normalized = String(locationText || '').toLowerCase();
-  return normalized.includes('montgomery') && (normalized.includes('al') || normalized.includes('alabama'));
+  return classifyCareerLocation(locationText) === 'montgomery';
+}
+
+function classifyCareerLocation(locationText) {
+  const loc = String(locationText || '').toLowerCase();
+  if (/anywhere in the u\.s|remote job|\(remote\)/i.test(loc)) return 'remote';
+  if (loc.includes('montgomery') && (loc.includes('alabama') || loc.includes(', al'))) return 'montgomery';
+  if (/maxwell|tuskegee|millbrook|prattville|pike road|wetumpka/i.test(loc)) return 'river-region';
+  if (/alabama|,\s*al\b/.test(loc)) return 'alabama';
+  return 'other';
+}
+
+function daysSinceJobPosted(postedTime, now = new Date()) {
+  const parsed = postedTime ? new Date(postedTime) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) return null;
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.floor((startOfDay(now) - startOfDay(parsed)) / 86400000);
+}
+
+function enrichCareerJob(job) {
+  const locationTier = classifyCareerLocation(job?.location);
+  return { ...job, locationTier };
+}
+
+function sortCareersForDisplay(jobs) {
+  return [...(jobs || [])]
+    .map(enrichCareerJob)
+    .sort((a, b) => {
+      const tierDiff =
+        (CAREERS_LOCATION_TIER_ORDER[a.locationTier] ?? 3) -
+        (CAREERS_LOCATION_TIER_ORDER[b.locationTier] ?? 3);
+      if (tierDiff !== 0) return tierDiff;
+      return new Date(b.postedTime || 0) - new Date(a.postedTime || 0);
+    });
+}
+
+function careersFeedStats(jobs) {
+  const enriched = (jobs || []).map(enrichCareerJob);
+  const montgomery = enriched.filter((j) => j.locationTier === 'montgomery');
+  const mDays = montgomery
+    .map((j) => daysSinceJobPosted(j.postedTime))
+    .filter((d) => d !== null);
+  return {
+    montgomeryCount: montgomery.length,
+    postedLast7Days: enriched.filter((j) => {
+      const d = daysSinceJobPosted(j.postedTime);
+      return d !== null && d <= 7;
+    }).length,
+    newestMontgomeryDaysAgo: mDays.length ? Math.min(...mDays) : null
+  };
 }
 
 /** Merge today's API results with saved jobs; drop only closed/expired listings. */
@@ -1195,9 +1255,11 @@ const runJobsCron = async () => {
           'Authorization-Key': USAJOBS_API_KEY
         };
         const queries = [
+          'LocationName=Montgomery%2C+Alabama&ResultsPerPage=50&DatePosted=7',
+          'LocationName=Montgomery%2C+Alabama&ResultsPerPage=50&DatePosted=30',
           'LocationName=Montgomery%2C+Alabama&ResultsPerPage=50',
-          'Keyword=Montgomery&LocationName=Alabama&ResultsPerPage=50',
-          'LocationName=Alabama&ResultsPerPage=100'
+          'Keyword=Montgomery&LocationName=Alabama&ResultsPerPage=50&DatePosted=14',
+          'LocationName=Alabama&ResultsPerPage=100&DatePosted=14'
         ];
         const seenUrls = new Set();
         let items = [];

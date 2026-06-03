@@ -46,13 +46,24 @@ const CapitalCityCareers = () => {
         const parsed = new Date(value);
         if (Number.isNaN(parsed.getTime())) return value;
 
-        const diffMs = Date.now() - parsed.getTime();
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const diffDays = Math.floor((startOfDay(new Date()) - startOfDay(parsed)) / 86400000);
         if (diffDays < 1) return 'Today';
         if (diffDays === 1) return '1 day ago';
         if (diffDays < 30) return `${diffDays} days ago`;
 
         return parsed.toLocaleDateString();
+    };
+
+    const locationBadge = (tier) => {
+        const map = {
+            montgomery: { label: 'Montgomery', className: 'bg-mgm-cyan/20 text-mgm-cyan border-mgm-cyan/40' },
+            'river-region': { label: 'River Region', className: 'bg-mgm-blue/20 text-mgm-blue border-mgm-blue/40' },
+            alabama: { label: 'Alabama', className: 'bg-gray-600/30 text-gray-300 border-gray-600' },
+            remote: { label: 'Remote', className: 'bg-amber-500/15 text-amber-300 border-amber-500/35' },
+            other: { label: 'Regional', className: 'bg-gray-600/30 text-gray-300 border-gray-600' }
+        };
+        return map[tier] || map.other;
     };
 
     return (
@@ -91,7 +102,12 @@ const CapitalCityCareers = () => {
                                 {data.feedStaleWarning}
                             </p>
                         )}
-                        <p className="text-gray-400 text-sm mb-4">Live feed of Montgomery jobs — updated daily; open listings stay until they close.</p>
+                        <p className="text-gray-400 text-sm mb-2">
+                            Federal jobs for Montgomery and the River Region (includes Maxwell AFB). Open roles stay listed until they close.
+                        </p>
+                        {data.feedNote && (
+                            <p className="text-xs text-gray-500 mb-3">{data.feedNote}</p>
+                        )}
 
                         {/* Metrics */}
                         <div className="grid grid-cols-2 gap-4 mb-6">
@@ -102,33 +118,44 @@ const CapitalCityCareers = () => {
                                 </p>
                             </div>
                             <div className="bg-mgm-navy p-4 rounded-lg">
-                                <p className="text-xs text-gray-500">Top Industry</p>
+                                <p className="text-xs text-gray-500">In Montgomery</p>
                                 <p className="text-2xl font-bold text-white">
-                                    {loading ? '...' : data.topIndustry || 'N/A'}
+                                    {loading ? '...' : (data.montgomeryCount ?? '—')}
                                 </p>
+                                {!loading && data.postedLast7Days != null && (
+                                    <p className="text-[10px] text-gray-500 mt-1">{data.postedLast7Days} posted this week (all areas)</p>
+                                )}
                             </div>
                         </div>
 
                         {/* Job List */}
                         <ul className="space-y-3">
                             {displayJobs.length > 0 ? (
-                                displayJobs.map((job, index) => (
+                                displayJobs.map((job, index) => {
+                                    const badge = locationBadge(job.locationTier);
+                                    return (
                                     <li key={job.url || index}>
                                         <a
                                             href={job.url || '#'}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="p-3 bg-mgm-navy rounded border border-gray-800 flex justify-between items-start hover:border-mgm-cyan transition-colors block"
+                                            className="p-3 bg-mgm-navy rounded border border-gray-800 flex justify-between items-start gap-2 hover:border-mgm-cyan transition-colors block"
                                         >
-                                            <div>
+                                            <div className="min-w-0">
                                                 <p className="font-medium text-gray-200">{job.title}</p>
                                                 <p className="text-xs text-gray-500">{job.company}</p>
-                                                <p className="text-xs text-gray-500 mt-0.5">{(job.location || 'Montgomery, AL').replace(' (Nearby/Remote)', '')}</p>
+                                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${badge.className}`}>
+                                                        {badge.label}
+                                                    </span>
+                                                    <p className="text-xs text-gray-500 truncate">{job.location || 'Montgomery, AL'}</p>
+                                                </div>
                                             </div>
-                                            <span className="text-xs text-mgm-gold shrink-0 ml-2">{formatPostedTime(job.postedTime)}</span>
+                                            <span className="text-xs text-mgm-gold shrink-0">{formatPostedTime(job.postedTime)}</span>
                                         </a>
                                     </li>
-                                ))
+                                    );
+                                })
                             ) : (
                                 !loading && (
                                     <div className="text-center py-4 space-y-2">
