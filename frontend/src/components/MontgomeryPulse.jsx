@@ -6,9 +6,9 @@ const MontgomeryPulse = () => {
     const [activeFilter, setActiveFilter] = useState('all');
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [scraping, setScraping] = useState(false);
     const [error, setError] = useState(null);
     const [page, setPage] = useState(1);
+    const [lastUpdated, setLastUpdated] = useState(null);
 
     const categories = [
         { id: 'all', label: 'All', icon: '🔔' },
@@ -21,41 +21,12 @@ const MontgomeryPulse = () => {
 
     const isDigestItem = (item) => / Update from Montgomery$/i.test(String(item?.title || ''));
 
-    const refreshPulseWithBrightData = async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 120000);
-        try {
-            const res = await fetch(apiUrl('/api/dashboard/refresh/pulse'), {
-                method: 'POST',
-                cache: 'no-store',
-                signal: controller.signal
-            });
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
-                throw new Error(body.error || `Refresh failed (${res.status})`);
-            }
-        } finally {
-            clearTimeout(timeout);
-        }
-    };
-
     const fetchData = async (resetPage = false) => {
         try {
             setLoading(true);
             setError(null);
             const currentPage = resetPage ? 1 : page;
             const categoryParam = activeFilter !== 'all' ? `&category=${activeFilter}` : '';
-
-            if (resetPage) {
-                setScraping(true);
-                try {
-                    await refreshPulseWithBrightData();
-                } catch (refreshErr) {
-                    console.warn('Pulse Bright Data refresh:', refreshErr.message);
-                } finally {
-                    setScraping(false);
-                }
-            }
 
             const storedRes = await fetch(
                 apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}`),
@@ -65,6 +36,8 @@ const MontgomeryPulse = () => {
             if (!storedRes.ok) throw new Error('Failed to fetch Montgomery Pulse data');
 
             const result = await storedRes.json();
+            setLastUpdated(result.lastUpdated || null);
+
             let merged = (result.items || []).filter((item) => !isDigestItem(item));
 
             if (activeFilter !== 'all') {
@@ -87,8 +60,6 @@ const MontgomeryPulse = () => {
 
     useEffect(() => {
         fetchData(true);
-        const interval = setInterval(() => fetchData(true), 30 * 60 * 1000);
-        return () => clearInterval(interval);
     }, [activeFilter]);
 
     const handleLoadMore = () => {
@@ -127,7 +98,14 @@ const MontgomeryPulse = () => {
         return cat ? cat.icon : '📰';
     };
 
-    const busy = loading || scraping;
+    const formatLastSync = () => {
+        if (!lastUpdated) return null;
+        const d = new Date(lastUpdated);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+
+    const lastSyncLabel = formatLastSync();
 
     return (
         <div className="bg-mgm-card rounded-xl p-6 shadow-lg border border-gray-800 flex flex-col h-96">
@@ -144,15 +122,17 @@ const MontgomeryPulse = () => {
                     <button
                         onClick={() => fetchData(true)}
                         className="text-mgm-cyan hover:text-mgm-gold transition-colors"
-                        disabled={busy}
+                        disabled={loading}
+                        title="Reload saved feed (scraping runs once daily on the server)"
                     >
-                        <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                     </button>
                 </div>
             </div>
 
             <p className="text-xs text-gray-500 mb-3">
-                Montgomery city news scraped with Bright Data when you open or refresh this panel.
+                Montgomery city news, updated once daily via Bright Data
+                {lastSyncLabel ? ` · newest headline ${lastSyncLabel}` : ''}.
             </p>
 
             <div className="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-700">
@@ -175,7 +155,7 @@ const MontgomeryPulse = () => {
             <div className="flex-1 overflow-y-auto space-y-3 pr-2">
                 {error ? (
                     <p className="text-red-400 text-sm">Error: {error}</p>
-                ) : items.length === 0 && !busy ? (
+                ) : items.length === 0 && !loading ? (
                     <p className="text-gray-500 text-sm text-center py-8">No updates yet</p>
                 ) : (
                     items.map((item, index) => {
@@ -223,21 +203,19 @@ const MontgomeryPulse = () => {
                     })
                 )}
 
-                {busy && items.length === 0 && (
+                {loading && items.length === 0 && (
                     <div className="text-center py-8">
                         <div className="inline-block w-6 h-6 border-2 border-mgm-blue border-t-transparent rounded-full animate-spin"></div>
-                        <p className="text-gray-500 text-sm mt-2">
-                            {scraping ? 'Scraping with Bright Data…' : 'Loading updates…'}
-                        </p>
+                        <p className="text-gray-500 text-sm mt-2">Loading updates…</p>
                     </div>
                 )}
             </div>
 
-            {!busy && items.length > 0 && (
+            {!loading && items.length > 0 && (
                 <button
                     onClick={handleLoadMore}
                     className="mt-4 w-full py-2 text-xs bg-mgm-navy hover:bg-gray-700 text-gray-400 hover:text-white rounded transition"
-                    disabled={busy}
+                    disabled={loading}
                 >
                     Load more updates...
                 </button>

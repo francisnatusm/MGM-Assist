@@ -79,7 +79,7 @@ function hasBrightDataScraping() {
 }
 
 /** Scrape via Bright Data Web Unlocker REST API (works on Vercel when MCP SDK fails). */
-async function brightDataUnlockerScrape(url) {
+async function brightDataUnlockerScrape(url, opts = {}) {
   if (!BRIGHTDATA_API_TOKEN) {
     throw new Error('BRIGHTDATA_API_TOKEN is not configured');
   }
@@ -91,6 +91,16 @@ async function brightDataUnlockerScrape(url) {
     'unblocker'
   ].filter((z, i, arr) => z && arr.indexOf(z) === i);
 
+  const requestBody = {
+    zone: null,
+    url,
+    format: 'raw',
+    method: 'GET'
+  };
+  if (opts.raw !== true) {
+    requestBody.data_format = 'markdown';
+  }
+
   let lastError = 'No unlocker zone succeeded';
   for (const zone of zoneCandidates) {
     try {
@@ -100,27 +110,31 @@ async function brightDataUnlockerScrape(url) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${BRIGHTDATA_API_TOKEN}`
         },
-        body: JSON.stringify({
-          zone,
-          url,
-          format: 'raw',
-          data_format: 'markdown',
-          method: 'GET'
-        })
+        body: JSON.stringify({ ...requestBody, zone })
       });
 
       const body = await res.text();
-      if (res.ok && body.length > 100) {
+      if (res.ok && body.trim().length >= 100) {
         console.log(`  ✅ Bright Data unlocker (${zone}): ${body.length} chars from ${url}`);
         return body;
       }
-      lastError = `zone=${zone} HTTP ${res.status}: ${body.slice(0, 180)}`;
+      lastError = `zone=${zone} HTTP ${res.status}: ${body.slice(0, 180) || '(empty body)'}`;
       if (res.status === 407 || res.status === 401) continue;
     } catch (e) {
       lastError = `zone=${zone}: ${e.message}`;
     }
   }
   throw new Error(lastError);
+}
+
+function isUsableScrapeContent(content) {
+  return typeof content === 'string' && content.trim().length >= 100;
+}
+
+function normalizeMcpScrapeContent(result) {
+  let content = result?.content || result?.data || result || '';
+  if (typeof content !== 'string') content = JSON.stringify(content);
+  return content;
 }
 const MODELS_TO_TRY = [
   'claude-sonnet-4-6',
@@ -465,6 +479,17 @@ async function executeMcpTool(toolName, toolInput) {
           result = await customMcpClient.callTool(toolName, toolInput || {});
         }
       }
+      const mcpContent = normalizeMcpScrapeContent(result);
+      if (
+        (toolName === 'scrape_as_markdown' || toolName === 'fetch_webpage_content') &&
+        url &&
+        !isUsableScrapeContent(mcpContent)
+      ) {
+        return {
+          ok: false,
+          result: { error: `Bright Data MCP returned empty or unusable content for ${url}` }
+        };
+      }
     } else if (ACTIVE_MCP_SOURCE === 'brightdata-rest') {
       return {
         ok: false,
@@ -624,6 +649,10 @@ function extractPulseStoriesFromScraped(allScrapedContent) {
 
   for (const { url: pageUrl, content } of allScrapedContent || []) {
     const text = normalizeScrapeContent(content);
+    if (text.includes('<item>')) {
+      stories.push(...parseRssXmlToStories(text, seen));
+      continue;
+    }
     const linkRe = /\[([^\]\n]{10,140})\]\((https?:[^)\s]+)\)/g;
     let match;
     while ((match = linkRe.exec(text)) !== null) {
@@ -663,8 +692,6 @@ function mergePulseStoryLists(...lists) {
   }
   return [...byLink.values()];
 }
-
-const PULSE_LIVE_REFRESH_HOURS = 0.5;
 
 function decodeXmlEntities(text) {
   return String(text || '')
@@ -711,6 +738,15 @@ function parseRssXmlToStories(xml, seen) {
 }
 
 async function fetchRssFeedXml(feedUrl) {
+  if (hasBrightDataScraping()) {
+    try {
+      const xml = await brightDataUnlockerScrape(feedUrl, { raw: true });
+      if (xml.includes('<item>')) return xml;
+    } catch (e) {
+      console.warn(`RSS Bright Data fetch failed (${feedUrl}):`, e.message);
+    }
+  }
+
   try {
     const res = await fetch(feedUrl, {
       headers: { 'User-Agent': 'MGM-Assist/1.0 (Montgomery civic dashboard)' },
@@ -724,26 +760,14 @@ async function fetchRssFeedXml(feedUrl) {
     console.warn(`RSS direct fetch failed (${feedUrl}):`, e.message);
   }
 
-  if (hasBrightDataScraping()) {
-    try {
-      const scrapeResult = await executeMcpTool('scrape_as_markdown', { url: feedUrl });
-      if (scrapeResult.ok) {
-        let content = scrapeResult.result?.content || scrapeResult.result?.data || scrapeResult.result || '';
-        if (typeof content !== 'string') content = JSON.stringify(content);
-        const xml = normalizeScrapeContent(content);
-        if (xml.includes('<item>')) return xml;
-      }
-    } catch (e) {
-      console.warn(`RSS Bright Data fetch failed (${feedUrl}):`, e.message);
-    }
-  }
   return '';
 }
 
-/** Live headlines via RSS — merged on every API read for same-day news. */
+/** Live headlines via RSS — primary source when city .gov sites block scrapers. */
 async function fetchPulseRssStories() {
   const feeds = [
-    'https://news.google.com/rss/search?q=Montgomery+Alabama+government&hl=en-US&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Montgomery+Alabama+government+OR+council+OR+mayor&hl=en-US&gl=US&ceid=US:en',
+    'https://news.google.com/rss/search?q=Montgomery+Alabama+city&hl=en-US&gl=US&ceid=US:en',
     'https://news.google.com/rss/search?q=Montgomery+Alabama&hl=en-US&gl=US&ceid=US:en',
     'https://www.al.com/arc/outboundfeeds/rss/section/montgomery/?outputType=xml'
   ];
@@ -1314,24 +1338,7 @@ app.get('/api/montgomery-pulse', async (req, res) => {
     const metaRef = db.collection('dashboards').doc('montgomeryPulse');
     const metaSnap = await metaRef.get();
     const meta = metaSnap.exists ? metaSnap.data() : {};
-    const pulseLastCheck = meta.lastDailyCheckAt || meta.lastSyncedAt;
-    const live = req.query.live === '1';
-    const shouldRunPulseCron =
-      pageNum === 1 &&
-      (!category || category === 'all') &&
-      (live
-        ? hoursSinceFirestoreTime(pulseLastCheck) >= PULSE_LIVE_REFRESH_HOURS
-        : needsDailyCronRun(pulseLastCheck));
-
-    if (shouldRunPulseCron) {
-      try {
-        console.log(`📡 Montgomery Pulse: ${live ? 'live' : 'daily'} Bright Data refresh...`);
-        await runMontgomeryPulseCron();
-      } catch (e) {
-        console.error('GET /api/montgomery-pulse daily refresh:', e.message);
-      }
-    }
-
+    // Pulse scraping runs on Vercel cron only — opening this API must not trigger Bright Data.
     let query = db.collection('montgomery_pulse')
       .orderBy('date', 'desc');
 
@@ -1437,7 +1444,7 @@ app.post('/api/dashboard/refresh/:dashboard', async (req, res) => {
 //   business      0 0 * * *   — daily (~midnight hour UTC)
 //   economy       0 0 1 * *   — monthly, 1st (~midnight hour UTC)
 //   opportunities 0 2 * * *   — daily (~02:00–02:59 UTC)
-//   pulse         0 8 * * *   — daily (~08:00–08:59 UTC)
+//   pulse         0 7 * * *   — daily (~07:00 UTC)
 // If CRON_SECRET is set in Vercel env, the platform sends Authorization: Bearer <secret>.
 function verifyVercelCron(req, res, next) {
   const secret = process.env.CRON_SECRET;
@@ -2180,23 +2187,24 @@ const runMontgomeryPulseCron = async () => {
     console.log(`✅ MCP Source: ${ACTIVE_MCP_SOURCE} | Available Tools: ${MCP_TOOLS.length}`);
 
     const montgomeryUrls = [
+      'https://news.google.com/rss/search?q=Montgomery+Alabama+government+OR+council+OR+mayor&hl=en-US&gl=US&ceid=US:en',
+      'https://news.google.com/rss/search?q=Montgomery+Alabama+city&hl=en-US&gl=US&ceid=US:en',
       'https://www.montgomeryal.gov/government/stay-informed/city-news',
       'https://www.montgomeryal.gov/government/stay-informed/public-notices',
-      'https://www.montgomeryal.gov/government/city-government/city-council',
-      'https://www.montgomeryal.gov/government/city-government/mayor-s-office',
-      'https://www.montgomeryal.gov/government/city-government/city-calendar',
-      'https://www.mc-ala.org/',
-      'https://www.wsfa.com/news/local/montgomery/'
+      'https://www.mc-ala.org/'
     ];
+
+    const rssItems = await fetchPulseRssStories();
+    console.log(`  📡 RSS prefetch: ${rssItems.length} headlines`);
 
     const allScrapedContent = [];
 
-    // Scrape all Montgomery URLs
+    // Scrape Montgomery URLs (RSS feeds first — city .gov often returns empty from unlocker)
     for (const url of montgomeryUrls) {
       try {
         console.log(`📍 Scraping: ${url}`);
         let scrapeResult;
-        
+
         if (hasBrightDataScraping()) {
           console.log(`  → Bright Data scrape (REST or MCP)...`);
           scrapeResult = await executeMcpTool('scrape_as_markdown', { url });
@@ -2211,14 +2219,14 @@ const runMontgomeryPulseCron = async () => {
         if (!scrapeResult.ok) {
           console.error(`  ❌ Scrape error:`, scrapeResult.result?.error || 'failed');
         } else if (scrapeResult.result) {
-          let content = scrapeResult.result.content || scrapeResult.result.data || scrapeResult.result || '';
-          // Ensure content is a string
-          if (typeof content !== 'string') {
-            content = JSON.stringify(content);
+          let content = normalizeMcpScrapeContent(scrapeResult.result);
+          if (!isUsableScrapeContent(content)) {
+            console.warn(`  ⚠️ Empty or too-short content from ${url} (${content.length} chars)`);
+          } else {
+            const truncated = content.substring(0, 12000);
+            console.log(`  ✅ Scraped ${content.length} chars (using first ${truncated.length})`);
+            allScrapedContent.push({ url, content: truncated });
           }
-          const truncated = content.substring(0, 12000);
-          console.log(`  ✅ Scraped ${content.length} chars (using first ${truncated.length})`);
-          allScrapedContent.push({ url, content: truncated });
         } else {
           console.warn(`  ⚠️ Unexpected result format:`, Object.keys(scrapeResult || {}));
         }
@@ -2227,9 +2235,9 @@ const runMontgomeryPulseCron = async () => {
       }
     }
 
-    console.log(`\n📊 Scrape Summary: ${allScrapedContent.length} URLs succeeded out of ${montgomeryUrls.length}`);
-    if (allScrapedContent.length === 0) {
-      console.error('❌ CRITICAL: No content scraped from Montgomery URLs. Aborting pulse update.');
+    console.log(`\n📊 Scrape Summary: ${allScrapedContent.length} URLs with content out of ${montgomeryUrls.length}`);
+    if (allScrapedContent.length === 0 && rssItems.length === 0) {
+      console.error('❌ CRITICAL: No RSS or scraped content. Aborting pulse update.');
       await db.collection('dashboards').doc('montgomeryPulse').set(
         {
           lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2321,7 +2329,6 @@ const runMontgomeryPulseCron = async () => {
       });
     };
 
-    const rssItems = await fetchPulseRssStories();
     let markdownItems = extractPulseStoriesFromScraped(allScrapedContent);
     console.log(`  📰 Markdown/link extraction: ${markdownItems.length} headlines`);
     if (markdownItems.length > 0) {
@@ -2453,7 +2460,7 @@ if (process.env.VERCEL !== '1') {
   cron.schedule('0 0 * * *', runBusinessCron);
   cron.schedule('0 0 1 * *', runEconomyCron);
   cron.schedule('0 2 * * *', runOpportunityCron);
-  cron.schedule('0 8,14,20 * * *', runMontgomeryPulseCron);
+  cron.schedule('0 7 * * *', runMontgomeryPulseCron);
 }
 
 async function initializeOnBoot() {
