@@ -6,6 +6,7 @@ const MontgomeryPulse = () => {
     const [activeFilter, setActiveFilter] = useState('all');
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [scraping, setScraping] = useState(false);
     const [error, setError] = useState(null);
     const [page, setPage] = useState(1);
 
@@ -20,28 +21,21 @@ const MontgomeryPulse = () => {
 
     const isDigestItem = (item) => / Update from Montgomery$/i.test(String(item?.title || ''));
 
-    const mergeLiveAndStored = (storedItems, liveItems) => {
-        const byKey = new Map();
-        const add = (item) => {
-            if (!item?.title || isDigestItem(item)) return;
-            const key = item.actionLink || item.source || item.title;
-            if (!byKey.has(key)) byKey.set(key, item);
-        };
-        for (const item of liveItems || []) add(item);
-        for (const item of storedItems || []) add(item);
-        return [...byKey.values()].sort(
-            (a, b) => new Date(b.publishedAt || b.date || 0) - new Date(a.publishedAt || a.date || 0)
-        );
-    };
-
-    const fetchLiveRss = async () => {
+    const refreshPulseWithBrightData = async () => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 120000);
         try {
-            const res = await fetch('/api/pulse-rss', { cache: 'no-store' });
-            if (!res.ok) return [];
-            const data = await res.json();
-            return data.items || [];
-        } catch {
-            return [];
+            const res = await fetch(apiUrl('/api/dashboard/refresh/pulse'), {
+                method: 'POST',
+                cache: 'no-store',
+                signal: controller.signal
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error || `Refresh failed (${res.status})`);
+            }
+        } finally {
+            clearTimeout(timeout);
         }
     };
 
@@ -52,18 +46,26 @@ const MontgomeryPulse = () => {
             const currentPage = resetPage ? 1 : page;
             const categoryParam = activeFilter !== 'all' ? `&category=${activeFilter}` : '';
 
-            const [storedRes, liveRss] = await Promise.all([
-                fetch(
-                    apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}&live=1`),
-                    { cache: 'no-store' }
-                ),
-                resetPage || currentPage === 1 ? fetchLiveRss() : Promise.resolve([])
-            ]);
+            if (resetPage) {
+                setScraping(true);
+                try {
+                    await refreshPulseWithBrightData();
+                } catch (refreshErr) {
+                    console.warn('Pulse Bright Data refresh:', refreshErr.message);
+                } finally {
+                    setScraping(false);
+                }
+            }
+
+            const storedRes = await fetch(
+                apiUrl(`/api/montgomery-pulse?page=${currentPage}${categoryParam}`),
+                { cache: 'no-store' }
+            );
 
             if (!storedRes.ok) throw new Error('Failed to fetch Montgomery Pulse data');
 
             const result = await storedRes.json();
-            let merged = mergeLiveAndStored(result.items || [], liveRss);
+            let merged = (result.items || []).filter((item) => !isDigestItem(item));
 
             if (activeFilter !== 'all') {
                 merged = merged.filter((item) => item.category === activeFilter);
@@ -73,9 +75,8 @@ const MontgomeryPulse = () => {
                 setItems(merged);
                 setPage(1);
             } else {
-                setItems(prev => [...prev, ...(result.items || []).filter((item) => !isDigestItem(item))]);
+                setItems(prev => [...prev, ...merged.filter((item) => !isDigestItem(item))]);
             }
-            
         } catch (err) {
             console.error('Error fetching Montgomery Pulse:', err);
             setError(err.message);
@@ -86,8 +87,7 @@ const MontgomeryPulse = () => {
 
     useEffect(() => {
         fetchData(true);
-        // Refresh every 30 minutes
-        const interval = setInterval(() => fetchData(true), 15 * 60 * 1000);
+        const interval = setInterval(() => fetchData(true), 30 * 60 * 1000);
         return () => clearInterval(interval);
     }, [activeFilter]);
 
@@ -127,6 +127,8 @@ const MontgomeryPulse = () => {
         return cat ? cat.icon : '📰';
     };
 
+    const busy = loading || scraping;
+
     return (
         <div className="bg-mgm-card rounded-xl p-6 shadow-lg border border-gray-800 flex flex-col h-96">
             <div className="flex justify-between items-center mb-4">
@@ -139,19 +141,20 @@ const MontgomeryPulse = () => {
                         <span className="w-1.5 h-1.5 bg-mgm-green rounded-full animate-pulse"></span>
                         Live
                     </span>
-                    <button 
-                        onClick={() => fetchData(true)} 
+                    <button
+                        onClick={() => fetchData(true)}
                         className="text-mgm-cyan hover:text-mgm-gold transition-colors"
-                        disabled={loading}
+                        disabled={busy}
                     >
-                        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
                     </button>
                 </div>
             </div>
 
-            <p className="text-xs text-gray-500 mb-3">Live Montgomery headlines (RSS + city archive), refreshed every time you open this page.</p>
+            <p className="text-xs text-gray-500 mb-3">
+                Montgomery city news scraped with Bright Data when you open or refresh this panel.
+            </p>
 
-            {/* Filter buttons */}
             <div className="flex flex-wrap gap-2 mb-4 pb-3 border-b border-gray-700">
                 {categories.map(cat => (
                     <button
@@ -169,19 +172,17 @@ const MontgomeryPulse = () => {
                 ))}
             </div>
 
-            {/* Feed */}
             <div className="flex-1 overflow-y-auto space-y-3 pr-2">
                 {error ? (
                     <p className="text-red-400 text-sm">Error: {error}</p>
-                ) : items.length === 0 && !loading ? (
+                ) : items.length === 0 && !busy ? (
                     <p className="text-gray-500 text-sm text-center py-8">No updates yet</p>
                 ) : (
                     items.map((item, index) => {
                         const daysUntil = getDaysUntil(item.deadline);
-                        
+
                         return (
                             <div key={item.id || index} className="bg-mgm-navy p-3 rounded border border-gray-800 hover:border-mgm-cyan/30 transition">
-                                {/* Category + Time */}
                                 <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
                                     <span>{getCategoryIcon(item.category)}</span>
                                     <span className="capitalize">{item.category}</span>
@@ -192,13 +193,9 @@ const MontgomeryPulse = () => {
                                     </span>
                                 </div>
 
-                                {/* Title */}
                                 <h3 className="font-semibold text-white text-sm mb-2">{item.title}</h3>
-
-                                {/* Summary */}
                                 <p className="text-gray-400 text-xs leading-relaxed mb-3">{item.summary}</p>
 
-                                {/* Footer: Deadline + Action */}
                                 <div className="flex items-center justify-between gap-2">
                                     {daysUntil !== null && daysUntil >= 0 && (
                                         <div className={`text-xs flex items-center gap-1 ${
@@ -208,7 +205,7 @@ const MontgomeryPulse = () => {
                                             <span>{daysUntil} days left</span>
                                         </div>
                                     )}
-                                    
+
                                     {item.actionLink && item.actionLabel && (
                                         <a
                                             href={item.actionLink}
@@ -226,20 +223,21 @@ const MontgomeryPulse = () => {
                     })
                 )}
 
-                {loading && items.length === 0 && (
+                {busy && items.length === 0 && (
                     <div className="text-center py-8">
                         <div className="inline-block w-6 h-6 border-2 border-mgm-blue border-t-transparent rounded-full animate-spin"></div>
-                        <p className="text-gray-500 text-sm mt-2">Loading updates...</p>
+                        <p className="text-gray-500 text-sm mt-2">
+                            {scraping ? 'Scraping with Bright Data…' : 'Loading updates…'}
+                        </p>
                     </div>
                 )}
             </div>
 
-            {/* Load More */}
-            {!loading && items.length > 0 && (
+            {!busy && items.length > 0 && (
                 <button
                     onClick={handleLoadMore}
                     className="mt-4 w-full py-2 text-xs bg-mgm-navy hover:bg-gray-700 text-gray-400 hover:text-white rounded transition"
-                    disabled={loading}
+                    disabled={busy}
                 >
                     Load more updates...
                 </button>

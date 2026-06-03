@@ -64,9 +64,64 @@ const API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const API_URL = "https://api.anthropic.com/v1/messages";
 const MCP_SERVER_URL = 'http://localhost:3001'; // Custom MCP server with free APIs
 const BRIGHTDATA_API_TOKEN = process.env.BRIGHTDATA_API_TOKEN || '';
-const BRIGHTDATA_MCP_URL = BRIGHTDATA_API_TOKEN
-  ? `https://mcp.brightdata.com/mcp?token=${encodeURIComponent(BRIGHTDATA_API_TOKEN)}`
-  : '';
+const BRIGHTDATA_UNLOCKER_ZONE =
+  process.env.BRIGHTDATA_UNLOCKER_ZONE || process.env.BRIGHTDATA_ZONE || '';
+const BRIGHTDATA_MCP_URL = (() => {
+  if (!BRIGHTDATA_API_TOKEN) return '';
+  const params = new URLSearchParams({ token: BRIGHTDATA_API_TOKEN });
+  const unlocker = BRIGHTDATA_UNLOCKER_ZONE || 'mcp_unlocker';
+  if (unlocker) params.set('unlocker', unlocker);
+  return `https://mcp.brightdata.com/mcp?${params.toString()}`;
+})();
+
+function hasBrightDataScraping() {
+  return !!BRIGHTDATA_API_TOKEN;
+}
+
+/** Scrape via Bright Data Web Unlocker REST API (works on Vercel when MCP SDK fails). */
+async function brightDataUnlockerScrape(url) {
+  if (!BRIGHTDATA_API_TOKEN) {
+    throw new Error('BRIGHTDATA_API_TOKEN is not configured');
+  }
+
+  const zoneCandidates = [
+    BRIGHTDATA_UNLOCKER_ZONE,
+    'mcp_unlocker',
+    'web_unlocker1',
+    'unblocker'
+  ].filter((z, i, arr) => z && arr.indexOf(z) === i);
+
+  let lastError = 'No unlocker zone succeeded';
+  for (const zone of zoneCandidates) {
+    try {
+      const res = await fetch('https://api.brightdata.com/request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${BRIGHTDATA_API_TOKEN}`
+        },
+        body: JSON.stringify({
+          zone,
+          url,
+          format: 'raw',
+          data_format: 'markdown',
+          method: 'GET'
+        })
+      });
+
+      const body = await res.text();
+      if (res.ok && body.length > 100) {
+        console.log(`  ✅ Bright Data unlocker (${zone}): ${body.length} chars from ${url}`);
+        return body;
+      }
+      lastError = `zone=${zone} HTTP ${res.status}: ${body.slice(0, 180)}`;
+      if (res.status === 407 || res.status === 401) continue;
+    } catch (e) {
+      lastError = `zone=${zone}: ${e.message}`;
+    }
+  }
+  throw new Error(lastError);
+}
 const MODELS_TO_TRY = [
   'claude-sonnet-4-6',
   'claude-sonnet-4-5-20250929',
@@ -306,6 +361,22 @@ async function initializeMCPTools() {
         return;
       }
 
+      if (BRIGHTDATA_API_TOKEN) {
+        ACTIVE_MCP_SOURCE = 'brightdata-rest';
+        MCP_TOOLS = [
+          {
+            name: 'scrape_as_markdown',
+            description: 'Scrape a webpage as markdown via Bright Data',
+            input_schema: {
+              type: 'object',
+              properties: { url: { type: 'string' } },
+              required: ['url']
+            }
+          }
+        ];
+        console.log(`✅ Bright Data REST unlocker active (MCP SDK: ${brightList.error || 'unavailable'})`);
+        return;
+      }
       await failoverToCustom(brightList.error || 'unable to list Bright Data tools');
       return;
     }
@@ -358,6 +429,25 @@ Primary phone for complex issues: 334-625-4636
 
 async function executeMcpTool(toolName, toolInput) {
   try {
+    const url = toolInput?.url;
+    if (toolName === 'scrape_as_markdown' && url && BRIGHTDATA_API_TOKEN) {
+      try {
+        const content = await brightDataUnlockerScrape(url);
+        return { ok: true, result: { content } };
+      } catch (restErr) {
+        console.warn(`Bright Data REST scrape failed for ${url}:`, restErr.message);
+      }
+    }
+
+    if (toolName === 'fetch_webpage_content' && url && BRIGHTDATA_API_TOKEN) {
+      try {
+        const content = await brightDataUnlockerScrape(url);
+        return { ok: true, result: { content, data: content } };
+      } catch (restErr) {
+        console.warn(`Bright Data REST fetch failed for ${url}:`, restErr.message);
+      }
+    }
+
     if (ACTIVE_MCP_SOURCE === 'none') {
       return {
         ok: false,
@@ -375,6 +465,11 @@ async function executeMcpTool(toolName, toolInput) {
           result = await customMcpClient.callTool(toolName, toolInput || {});
         }
       }
+    } else if (ACTIVE_MCP_SOURCE === 'brightdata-rest') {
+      return {
+        ok: false,
+        result: { error: `Tool ${toolName} requires Bright Data MCP or REST scrape/fetch with url` }
+      };
     } else {
       result = await customMcpClient.callTool(toolName, toolInput || {});
     }
@@ -629,7 +724,7 @@ async function fetchRssFeedXml(feedUrl) {
     console.warn(`RSS direct fetch failed (${feedUrl}):`, e.message);
   }
 
-  if (ACTIVE_MCP_SOURCE === 'brightdata') {
+  if (hasBrightDataScraping()) {
     try {
       const scrapeResult = await executeMcpTool('scrape_as_markdown', { url: feedUrl });
       if (scrapeResult.ok) {
@@ -695,7 +790,7 @@ function mergePulseFeedForApi(dbItems, rssItems) {
 
 /** Bright Data: scrape individual article pages for fresh dates and summaries. */
 async function enrichPulseStoriesWithArticleScrapes(stories, maxPages = 10) {
-  if (ACTIVE_MCP_SOURCE !== 'brightdata' || !Array.isArray(stories) || stories.length === 0) {
+  if (!hasBrightDataScraping() || !Array.isArray(stories) || stories.length === 0) {
     return stories;
   }
 
@@ -931,13 +1026,20 @@ async function runConversationWithTools(model, userMessage) {
 
 // MCP Status endpoint - Check which MCP source is active
 app.get('/api/mcp-status', async (req, res) => {
+  if (MCP_TOOLS.length === 0) await initializeMCPTools();
   res.json({
     active_mcp_source: ACTIVE_MCP_SOURCE,
+    brightdata_unlocker_zone: BRIGHTDATA_UNLOCKER_ZONE || '(auto: web_unlocker1, unblocker, …)',
     brightdata_token_configured: !!BRIGHTDATA_API_TOKEN,
     brightdata_mcp_url: BRIGHTDATA_MCP_URL ? '✅ Configured' : '❌ Not configured',
     tools_loaded: MCP_TOOLS.length,
     available_tools: MCP_TOOLS.map(t => t.name),
-    status: ACTIVE_MCP_SOURCE === 'none' ? '❌ No MCP tools available' : `✅ Using ${ACTIVE_MCP_SOURCE} MCP`
+    status:
+      ACTIVE_MCP_SOURCE === 'none'
+        ? '❌ No MCP tools available'
+        : ACTIVE_MCP_SOURCE === 'brightdata-rest'
+          ? '✅ Using Bright Data Web Unlocker (REST)'
+          : `✅ Using ${ACTIVE_MCP_SOURCE} MCP`
   });
 });
 
@@ -1390,14 +1492,14 @@ app.get('/api/debug/pulse-scrape', async (req, res) => {
         log(` Scraping: ${url}`);
         let scrapeResult;
         
-        if (ACTIVE_MCP_SOURCE === 'brightdata') {
-          log(`  Using Bright Data MCP...`);
+        if (hasBrightDataScraping()) {
+          log(`  Using Bright Data scrape...`);
           scrapeResult = await executeMcpTool('scrape_as_markdown', { url });
         } else {
           log(`  Using custom MCP fallback...`);
-          scrapeResult = await executeMcpTool('fetch_webpage_content', { 
-            url, 
-            parse_type: 'text' 
+          scrapeResult = await executeMcpTool('fetch_webpage_content', {
+            url,
+            parse_type: 'text'
           });
         }
 
@@ -2095,22 +2197,20 @@ const runMontgomeryPulseCron = async () => {
         console.log(`📍 Scraping: ${url}`);
         let scrapeResult;
         
-        // Try scrape_as_markdown first (Bright Data tool)
-        if (ACTIVE_MCP_SOURCE === 'brightdata') {
-          console.log(`  → Using Bright Data MCP...`);
+        if (hasBrightDataScraping()) {
+          console.log(`  → Bright Data scrape (REST or MCP)...`);
           scrapeResult = await executeMcpTool('scrape_as_markdown', { url });
         } else {
-          // Fallback to custom fetch_webpage_content
-          console.log(`  → Using fallback fetch (non-Bright Data)...`);
-          scrapeResult = await executeMcpTool('fetch_webpage_content', { 
-            url, 
-            parse_type: 'text' 
+          console.log(`  → Custom MCP fetch (no Bright Data token)...`);
+          scrapeResult = await executeMcpTool('fetch_webpage_content', {
+            url,
+            parse_type: 'text'
           });
         }
 
-        if (scrapeResult.error) {
-          console.error(`  ❌ Scrape error: ${scrapeResult.error}`);
-        } else if (scrapeResult.ok && scrapeResult.result) {
+        if (!scrapeResult.ok) {
+          console.error(`  ❌ Scrape error:`, scrapeResult.result?.error || 'failed');
+        } else if (scrapeResult.result) {
           let content = scrapeResult.result.content || scrapeResult.result.data || scrapeResult.result || '';
           // Ensure content is a string
           if (typeof content !== 'string') {
